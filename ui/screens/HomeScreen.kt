@@ -1,5 +1,7 @@
 package com.example.modrinthforandroid.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,8 +12,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,17 +19,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
@@ -38,7 +34,6 @@ import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.HomeUiState
 import com.example.modrinthforandroid.viewmodel.HomeViewModel
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,7 +46,6 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -66,8 +60,7 @@ fun HomeScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text("M", fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontSize = 16.sp)
+                                color = MaterialTheme.colorScheme.onPrimary, fontSize = 16.sp)
                         }
                         Spacer(Modifier.width(8.dp))
                         Text("Mojorinth", fontWeight = FontWeight.Black,
@@ -104,8 +97,7 @@ fun HomeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("😕 ${uiState.error}",
-                        style = MaterialTheme.typography.bodyMedium,
+                    Text("😕 ${uiState.error}", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = { viewModel.refresh() }) { Text("Retry") }
@@ -137,10 +129,8 @@ private fun HomeContent(
             bottom = innerPadding.calculateBottomPadding() + 16.dp
         )
     ) {
-        // ── Instance picker ───────────────────────────────────────────────
-        item { InstancePickerCard() }
+        item { MojoLauncherCard() }
 
-        // ── Browse shortcuts ──────────────────────────────────────────────
         item {
             Spacer(Modifier.height(20.dp))
             SectionHeader("Browse", "What are you looking for?")
@@ -148,7 +138,6 @@ private fun HomeContent(
             BrowseGrid(onBrowseType = onBrowseType)
         }
 
-        // ── Trending Mods ─────────────────────────────────────────────────
         if (uiState.trendingMods.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -159,7 +148,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Popular Modpacks ──────────────────────────────────────────────
         if (uiState.trendingModpacks.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -170,7 +158,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Top Shaders ───────────────────────────────────────────────────
         if (uiState.trendingShaders.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -181,7 +168,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Recently Updated ──────────────────────────────────────────────
         if (uiState.newlyUpdated.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -195,43 +181,47 @@ private fun HomeContent(
     }
 }
 
-// ─── Instance Picker Card ─────────────────────────────────────────────────────
+// ─── MojoLauncher Card ────────────────────────────────────────────────────────
+// One card that handles both:
+//  Step 1 — pick the instances root folder (system Files app)
+//  Step 2 — search/select an instance subfolder
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InstancePickerCard() {
-    val context      = LocalContext.current
-    val focusManager = LocalFocusManager.current
+private fun MojoLauncherCard() {
+    val context = LocalContext.current
+    val green   = MaterialTheme.colorScheme.primary
 
-    // Mirror InstanceManager state into local compose state so the card recomposes
-    var activeName      by remember { mutableStateOf(InstanceManager.activeInstanceName) }
-    var typedName       by remember { mutableStateOf("") }
-    var showSuggestions by remember { mutableStateOf(false) }
-    var showBrowser     by remember { mutableStateOf(false) }
+    var rootSet      by cremember { mutableStateOf(InstanceManager.isRootSet) }
+    var displayPath  by remember { mutableStateOf(InstanceManager.rootDisplayPath) }
+    var activeInst   by remember { mutableStateOf(InstanceManager.activeInstance) }
 
-    // Instances found on disk
-    val instances = remember { InstanceManager.listInstances(context) }
+    // Instances list + search state
+    var instances    by remember { mutableStateOf(listOf<String>()) }
+    var searchQuery  by remember { mutableStateOf("") }
+    var showPicker   by remember { mutableStateOf(false) }
 
-    // Folder browser dialog
-    if (showBrowser) {
-        FolderBrowserDialog(
-            startPath = AppSettings.get(context).mojoInstancesPath,
-            onFolderSelected = { folderName ->
-                InstanceManager.setInstance(folderName)
-                activeName  = InstanceManager.activeInstanceName
-                typedName   = ""
-                showBrowser = false
-            },
-            onDismiss = { showBrowser = false }
-        )
+    // Load instance list whenever the root is set
+    LaunchedEffect(rootSet) {
+        if (rootSet) instances = InstanceManager.listInstances(context)
     }
 
-    val filteredInstances = remember(typedName, instances) {
-        if (typedName.isBlank()) instances
-        else instances.filter { it.contains(typedName, ignoreCase = true) }
+    val filteredInstances = remember(instances, searchQuery) {
+        if (searchQuery.isBlank()) instances
+        else instances.filter { it.contains(searchQuery, ignoreCase = true) }
     }
 
-    val green = MaterialTheme.colorScheme.primary
+    // System folder picker
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            InstanceManager.setRootFromUri(context, uri)
+            rootSet     = InstanceManager.isRootSet
+            displayPath = InstanceManager.rootDisplayPath
+            activeInst  = null
+            instances   = InstanceManager.listInstances(context)
+        }
+    }
 
     Surface(
         modifier       = Modifier
@@ -251,200 +241,223 @@ private fun InstancePickerCard() {
                         .clip(RoundedCornerShape(8.dp))
                         .background(green.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
-                ) {
-                    Text("🎮", fontSize = 18.sp)
-                }
+                ) { Text("🎮", fontSize = 18.sp) }
                 Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("Active Instance",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface)
+                Column(Modifier.weight(1f)) {
+                    Text("MojoLauncher", style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        text = if (activeName != null)
-                            "Downloads → MojoLauncher/instances/$activeName"
-                        else
-                            "No instance selected — downloads go to fallback folders",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        when {
+                            activeInst != null -> "Active: $activeInst"
+                            rootSet            -> "Select an instance below"
+                            else               -> "No folder set — tap to get started"
+                        },
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
             Spacer(Modifier.height(14.dp))
 
-            // ── Active instance chip or picker input ──────────────────────
-            if (activeName != null) {
-                // Show the active instance with a clear button
+            // ── Step 1: Root folder chip ──────────────────────────────────
+            if (rootSet && displayPath != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(green.copy(alpha = 0.12f))
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("📁", fontSize = 16.sp)
-                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.List, null,
+                        modifier = Modifier.size(14.dp),
+                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text  = activeName!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = green,
-                        modifier = Modifier.weight(1f)
+                        text     = displayPath!!,
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
-                    // Instance exists indicator
-                    val exists = InstanceManager.instanceExists(context, activeName!!)
-                    if (!exists) {
-                        Icon(Icons.Default.Warning, "Folder not found",
-                            tint = Color(0xFFFFA726),
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    IconButton(
-                        onClick  = {
-                            InstanceManager.clearInstance()
-                            activeName = null
-                            typedName  = ""
-                        },
-                        modifier = Modifier.size(28.dp)
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(
+                        onClick        = { folderPicker.launch(null) },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
-                        Icon(Icons.Default.Close, "Clear instance",
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp))
+                        Text("Change", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary)
                     }
                 }
 
-                if (!InstanceManager.instanceExists(context, activeName!!)) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("⚠ Folder not found — check your MojoLauncher instances path in Settings",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFFFA726))
+                Spacer(Modifier.height(12.dp))
+
+                // ── Step 2: Active instance chip ──────────────────────────
+                if (activeInst != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(green.copy(alpha = 0.12f))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📁", fontSize = 16.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text       = activeInst!!,
+                            style      = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = green,
+                            modifier   = Modifier.weight(1f),
+                            maxLines   = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(
+                            onClick  = {
+                                InstanceManager.clearActiveInstance(context)
+                                activeInst   = null
+                                showPicker   = false
+                                searchQuery  = ""
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, "Clear instance",
+                                tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp))
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick  = { showPicker = !showPicker; searchQuery = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape    = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Switch instance", style = MaterialTheme.typography.labelMedium)
+                    }
+                } else {
+                    // No instance selected yet — show picker inline
+                    showPicker = true
+                }
+
+                // ── Instance search + list ────────────────────────────────
+                AnimatedVisibility(visible = showPicker) {
+                    Column {
+                        Spacer(Modifier.height(8.dp))
+
+                        // Search bar
+                        OutlinedTextField(
+                            value         = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier      = Modifier.fillMaxWidth(),
+                            placeholder   = { Text("Search instances…") },
+                            leadingIcon   = { Icon(Icons.Default.Search, null,
+                                modifier = Modifier.size(18.dp)) },
+                            trailingIcon  = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Close, "Clear",
+                                            modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            singleLine    = true,
+                            shape         = RoundedCornerShape(10.dp),
+                            colors        = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor   = green,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                            )
+                        )
+
+                        Spacer(Modifier.height(6.dp))
+
+                        if (filteredInstances.isEmpty()) {
+                            Box(
+                                modifier         = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    if (instances.isEmpty()) "No instances found in this folder"
+                                    else                     "No instances match \"$searchQuery\"",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            }
+                        } else {
+                            // Instance list (capped at 6 visible, scrolls internally)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                filteredInstances.take(6).forEach { name ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (name == activeInst) green.copy(alpha = 0.1f)
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                InstanceManager.setActiveInstance(context, name)
+                                                activeInst  = name
+                                                showPicker  = false
+                                                searchQuery = ""
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("📁", fontSize = 16.sp)
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            text       = name,
+                                            style      = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color      = if (name == activeInst) green
+                                            else MaterialTheme.colorScheme.onSurface,
+                                            modifier   = Modifier.weight(1f)
+                                        )
+                                        if (name == activeInst) {
+                                            Icon(Icons.Default.Check, null,
+                                                tint     = green,
+                                                modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                    if (name != filteredInstances.take(6).last()) {
+                                        HorizontalDivider(
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                    }
+                                }
+                                if (filteredInstances.size > 6) {
+                                    Text(
+                                        "+ ${filteredInstances.size - 6} more — refine your search",
+                                        style    = MaterialTheme.typography.labelSmall,
+                                        color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
             } else {
-                // ── Text input to type or search an instance name ──────────
-                OutlinedTextField(
-                    value          = typedName,
-                    onValueChange  = {
-                        typedName       = it
-                        showSuggestions = it.isNotEmpty() || instances.isNotEmpty()
-                    },
-                    modifier       = Modifier.fillMaxWidth(),
-                    placeholder    = { Text("Type or pick an instance name…") },
-                    leadingIcon    = { Icon(Icons.Default.Search, null) },
-                    trailingIcon   = {
-                        if (typedName.isNotEmpty()) {
-                            IconButton(onClick = { typedName = ""; showSuggestions = false }) {
-                                Icon(Icons.Default.Close, "Clear")
-                            }
-                        }
-                    },
-                    singleLine     = true,
-                    shape          = RoundedCornerShape(10.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        if (typedName.isNotBlank()) {
-                            InstanceManager.setInstance(typedName)
-                            activeName      = InstanceManager.activeInstanceName
-                            showSuggestions = false
-                            focusManager.clearFocus()
-                        }
-                    }),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = green,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
-                    )
+                // ── No root set yet ───────────────────────────────────────
+                Text(
+                    "Select your MojoLauncher instances folder. You'll then be able to pick which instance to download mods into.",
+                    style      = MaterialTheme.typography.bodySmall,
+                    color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    lineHeight = 18.sp
                 )
-
-                // ── Browse filesystem button ───────────────────────────────
-                Spacer(Modifier.height(6.dp))
-                OutlinedButton(
-                    onClick  = { showBrowser = true },
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick  = { folderPicker.launch(null) },
                     modifier = Modifier.fillMaxWidth(),
-                    shape    = RoundedCornerShape(10.dp),
-                    colors   = ButtonDefaults.outlinedButtonColors(
-                        contentColor = green
-                    )
+                    shape    = RoundedCornerShape(10.dp)
                 ) {
                     Icon(Icons.Default.List, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Browse instance folders", style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold)
-                }
-
-                // ── Suggestions dropdown from scanned instances ────────────
-                AnimatedVisibility(visible = showSuggestions && filteredInstances.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp)
-                    ) {
-                        Text("Found on device:",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(bottom = 4.dp))
-                        filteredInstances.take(5).forEach { name ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        InstanceManager.setInstance(name)
-                                        activeName      = InstanceManager.activeInstanceName
-                                        typedName       = ""
-                                        showSuggestions = false
-                                        focusManager.clearFocus()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("📁", fontSize = 14.sp)
-                                Spacer(Modifier.width(8.dp))
-                                Text(name,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface)
-                            }
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-                        }
-                    }
-                }
-
-                // ── Confirm button when text is typed ─────────────────────
-                AnimatedVisibility(visible = typedName.isNotBlank()) {
-                    Column {
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                InstanceManager.setInstance(typedName)
-                                activeName      = InstanceManager.activeInstanceName
-                                showSuggestions = false
-                                focusManager.clearFocus()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape    = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Use \"$typedName\"", fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-
-                // ── Tip when no instances found on disk ───────────────────
-                if (instances.isEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "No instances found at ${AppSettings.get(context).mojoInstancesPath} — " +
-                                "check the path in Settings, or type a name manually.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                        lineHeight = 16.sp
-                    )
+                    Text("Choose instances folder", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -466,8 +479,7 @@ private fun SectionHeader(
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground)
+                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             if (subtitle != null)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
@@ -488,12 +500,12 @@ private data class BrowseItem(val label: String, val emoji: String, val type: St
 private fun BrowseGrid(onBrowseType: (String) -> Unit) {
     val green = MaterialTheme.colorScheme.primary
     val items = listOf(
-        BrowseItem("Mods",          "⚙️",  "mod",          green),
-        BrowseItem("Modpacks",      "📦",  "modpack",      Color(0xFF42A5F5)),
-        BrowseItem("Shaders",       "✨",  "shader",       Color(0xFFFFA726)),
-        BrowseItem("Resource\nPacks","🎨", "resourcepack", Color(0xFFAB47BC)),
-        BrowseItem("Data\nPacks",   "📋",  "datapack",     Color(0xFF26A69A)),
-        BrowseItem("Plugins",       "🔌",  "plugin",       Color(0xFFEF5350))
+        BrowseItem("Mods",           "⚙️",  "mod",          green),
+        BrowseItem("Modpacks",       "📦",  "modpack",      Color(0xFF42A5F5)),
+        BrowseItem("Shaders",        "✨",  "shader",       Color(0xFFFFA726)),
+        BrowseItem("Resource\nPacks","🎨",  "resourcepack", Color(0xFFAB47BC)),
+        BrowseItem("Data\nPacks",    "📋",  "datapack",     Color(0xFF26A69A)),
+        BrowseItem("Plugins",        "🔌",  "plugin",       Color(0xFFEF5350))
     )
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -519,8 +531,7 @@ private fun BrowseGrid(onBrowseType: (String) -> Unit) {
                         style      = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color      = item.tint,
-                        maxLines   = 2,
-                        overflow   = TextOverflow.Ellipsis,
+                        maxLines   = 2, overflow = TextOverflow.Ellipsis,
                         lineHeight = 13.sp)
                 }
             }
@@ -552,13 +563,10 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                         contentScale       = ContentScale.Crop
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text(mod.title,
-                        style      = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines   = 2,
-                        overflow   = TextOverflow.Ellipsis,
-                        color      = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 16.sp)
+                    Text(mod.title, style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface, lineHeight = 16.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("⬇ ${formatNumber(mod.downloads)}",
                         style = MaterialTheme.typography.labelSmall,
@@ -574,179 +582,6 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                         }
                     }
                 }
-            }
-        }
-    }
-}
-// ─── Folder Browser Dialog ────────────────────────────────────────────────────
-
-/**
- * A simple filesystem browser dialog.
- * Starts at [startPath] (the MojoLauncher instances root) and lets the user
- * tap folders. At the instances-root level, tapping a folder (or "Select") picks
- * it as the active instance. Deeper levels let the user navigate around.
- */
-@Composable
-fun FolderBrowserDialog(
-    startPath: String,
-    onFolderSelected: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var currentDir by remember { mutableStateOf(File(startPath)) }
-    val entries by remember(currentDir) {
-        derivedStateOf {
-            currentDir.listFiles()
-                ?.filter { it.isDirectory }
-                ?.sortedBy { it.name }
-                ?: emptyList()
-        }
-    }
-
-    val breadcrumb = currentDir.absolutePath
-        .removePrefix(startPath)
-        .trim('/')
-        .let { if (it.isEmpty()) "instances" else "instances/$it" }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.75f)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-
-                Text("Browse Instance Folders",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface)
-
-                Spacer(Modifier.height(4.dp))
-
-                Text("📂 $breadcrumb",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
-
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                Spacer(Modifier.height(8.dp))
-
-                // Back row when navigated into a subfolder
-                if (currentDir.absolutePath != startPath) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { currentDir = currentDir.parentFile ?: currentDir }
-                            .padding(horizontal = 10.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.ArrowBack, "Go up",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text(".. (go up)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium)
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-                }
-
-                // Folder list
-                if (entries.isEmpty()) {
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            if (!currentDir.exists()) "Path not found — check Settings"
-                            else "No subfolders here",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                        )
-                    }
-                } else {
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(entries, key = { it.absolutePath }) { folder ->
-                            val isInstanceRoot = currentDir.absolutePath == startPath
-                            val looksLikeInstance = File(folder, "mods").exists()
-                                    || File(folder, "shaderpacks").exists()
-                                    || File(folder, "resourcepacks").exists()
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        if (isInstanceRoot) {
-                                            // At instances root: tap row = select instance
-                                            onFolderSelected(folder.name)
-                                        } else {
-                                            currentDir = folder
-                                        }
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        text = if (isInstanceRoot && looksLikeInstance) "🎮" else "📁",
-                                        fontSize = 18.sp
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Column {
-                                        Text(folder.name,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis)
-                                        if (isInstanceRoot && looksLikeInstance) {
-                                            Text("Minecraft instance",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))
-                                        }
-                                    }
-                                }
-                                if (isInstanceRoot) {
-                                    TextButton(
-                                        onClick = { onFolderSelected(folder.name) },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("Select",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold)
-                                    }
-                                } else {
-                                    Icon(Icons.Default.KeyboardArrowRight, "Open",
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp))
-                                }
-                            }
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                Spacer(Modifier.height(8.dp))
-
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End)
-                ) { Text("Cancel") }
             }
         }
     }

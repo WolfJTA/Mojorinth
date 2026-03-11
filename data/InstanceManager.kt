@@ -1,63 +1,140 @@
 package com.example.modrinthforandroid.data
 
 import android.content.Context
-import android.os.Environment
+import android.net.Uri
+import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
 /**
  * Holds the currently active MojoLauncher instance for this app session.
- * Not persisted — the user picks (or re-picks) an instance each launch.
  *
- * MojoLauncher stores instances at:
- *   <externalStorage>/games/MojoLauncher/instances/<instanceName>/
- *
- * Subfolders per content type:
- *   mods/          ← mod, modpack
- *   shaderpacks/   ← shader
- *   resourcepacks/ ← resourcepack
- *   datapacks/     ← datapack
- *   plugins/       ← plugin
+ * The user picks the instances ROOT folder via ACTION_OPEN_DOCUMENT_TREE,
+ * which gives us a persistable content:// URI. We convert that URI to a
+ * real file path for DownloadWorker to use with plain File I/O.
  */
 object InstanceManager {
 
-    // The subfolder name inside instances/ — set by the user on the home screen
+    private const val TAG = "InstanceManager"
+
+    // Persisted content:// URI for the instances root folder
+    var rootUri: Uri? = null
+        private set
+
+    // Display-friendly path shown in the UI (e.g. ".../MojoLauncher/instances")
+    var rootDisplayPath: String? = null
+        private set
+
+    // The subfolder name the user selected (e.g. "test1")
     var activeInstanceName: String? = null
         private set
 
-    // Full path to the MojoLauncher instances directory
-    fun instancesRoot(context: Context): String {
-        val settings = AppSettings.get(context)
-        return settings.mojoInstancesPath
-    }
+    // ── Init ──────────────────────────────────────────────────────────────────
 
     /**
-     * Set the active instance by full path (from browser) or bare name (typed manually).
-     * If a full absolute path is given we use it directly; otherwise we resolve it
-     * relative to the instances root from Settings.
+     * Call from MainActivity.onCreate — restores state from SharedPreferences.
      */
-    fun setInstance(pathOrName: String) {
-        activeInstanceName = pathOrName.trim()
+    fun init(context: Context) {
+        val settings = AppSettings.get(context)
+        val uriString = settings.savedInstancesUri
+        if (!uriString.isNullOrBlank()) {
+            rootUri = Uri.parse(uriString)
+            rootDisplayPath = settings.savedInstancesDisplayPath
+            Log.d(TAG, "Restored root URI: $rootUri  display: $rootDisplayPath")
+        }
+        val saved = settings.savedActiveInstance
+        if (!saved.isNullOrBlank()) {
+            activeInstanceName = saved
+            Log.d(TAG, "Restored active instance: $activeInstanceName")
+        }
     }
 
-    /** Clear the active instance (user taps "Clear" on home screen). */
-    fun clearInstance() {
-        activeInstanceName = null
-    }
+    // ── Root folder ───────────────────────────────────────────────────────────
 
     /**
-     * Returns the correct download folder for [projectType] given the active instance.
-     * Falls back to the legacy per-type folder from AppSettings if no instance is set.
+     * Called when the user picks a folder via ACTION_OPEN_DOCUMENT_TREE.
+     * Takes persistable permission and saves to prefs.
+     */
+    fun setRootFromUri(context: Context, uri: Uri) {
+        // Persist permission so it survives app restarts
+        context.contentResolver.takePersistableUriPermission(
+            uri,
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        rootUri = uri
+
+        // Build a human-readable display path
+        val docFile = DocumentFile.fromTreeUri(context, uri)
+        rootDisplayPath = docFile?.uri?.path
+            ?.replace("/tree/", "")
+            ?.replace("primary:", "/storage/emulated/0/")
+            ?: uri.toString()
+
+        val settings = AppSettings.get(context)
+        settings.savedInstancesUri = uri.toString()
+        settings.savedInstancesDisplayPath = rootDisplayPath
+
+        Log.d(TAG, "Root set → URI: $uri  display: $rootDisplayPath")
+    }
+
+    fun clearRoot(context: Context) {
+        rootUri = null
+        rootDisplayPath = null
+        activeInstanceName = null
+        val settings = AppSettings.get(context)
+        settings.savedInstancesUri = null
+        settings.savedInstancesDisplayPath = null
+        settings.savedActiveInstance = null
+        Log.d(TAG, "Root cleared")
+    }
+
+    // ── Active instance ───────────────────────────────────────────────────────
+
+    fun setActiveInstance(context: Context, name: String) {
+        activeInstanceName = name
+        AppSettings.get(context).savedActiveInstance = name
+        Log.d(TAG, "Active instance set: $name")
+    }
+
+    fun clearActiveInstance(context: Context) {
+        activeInstanceName = null
+        AppSettings.get(context).savedActiveInstance = null
+        Log.d(TAG, "Active instance cleared")
+    }
+
+    // ── Instance listing ──────────────────────────────────────────────────────
+
+    /**
+     * Lists subfolder names inside the root URI using DocumentFile.
+     */
+    fun listInstances(context: Context): List<String> {
+        val uri = rootUri ?: return emptyList()
+        return try {
+            DocumentFile.fromTreeUri(context, uri)
+                ?.listFiles()
+                ?.filter { it.isDirectory }
+                ?.mapNotNull { it.name }
+                ?.sorted()
+                ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "listInstances failed", e)
+            emptyList()
+        }
+    }
+
+    // ── Download folder resolution ────────────────────────────────────────────
+
+    /**
+     * Returns the real file-system path for [projectType] files given the
+     * active instance. Falls back to AppSettings legacy folder if no instance.
      */
     fun resolveDownloadFolder(context: Context, projectType: String): String {
-        val instancePath = activeInstanceName
-        return if (instancePath != null) {
-            // If it looks like an absolute path use it directly, otherwise
-            // resolve relative to the user-configured instances root
-            val instanceRoot = if (instancePath.startsWith("/"))
-                File(instancePath)
-            else
-                File(instancesRoot(context), instancePath)
+        val instanceName = activeInstanceName
+        val uri = rootUri
 
+        return if (instanceName != null && uri != null) {
+            val rootPath = uriToFilePath(uri)
             val sub = when (projectType) {
                 "mod", "modpack" -> "mods"
                 "shader"         -> "shaderpacks"
@@ -66,31 +143,66 @@ object InstanceManager {
                 "plugin"         -> "plugins"
                 else             -> "mods"
             }
-            File(instanceRoot, sub).absolutePath
+            val resolved = "$rootPath/$instanceName/$sub"
+            Log.d(TAG, "resolveDownloadFolder → $resolved")
+            resolved
         } else {
-            AppSettings.get(context).getDownloadFolder(projectType)
+            val fallback = AppSettings.get(context).getDownloadFolder(projectType)
+            Log.d(TAG, "resolveDownloadFolder fallback → $fallback")
+            fallback
         }
     }
 
-    /**
-     * Scans the instances root and returns all instance folder names found.
-     * Returns empty list if the path doesn't exist yet.
-     */
-    fun listInstances(context: Context): List<String> {
-        val root = File(instancesRoot(context))
-        if (!root.exists() || !root.isDirectory) return emptyList()
-        return root.listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { it.name }
-            ?.sorted()
-            ?: emptyList()
-    }
+    // ── URI → file path ───────────────────────────────────────────────────────
 
     /**
-     * Returns true if the given instance folder actually exists on disk.
+     * Converts a DocumentTree content:// URI to an absolute file path.
+     *
+     * URI tree path examples from Android:
+     *   /tree/primary:games/MojoLauncher/instances     → /storage/emulated/0/games/MojoLauncher/instances
+     *   /tree/primary:Android/data/...                 → /storage/emulated/0/Android/data/...
+     *   /tree/sdcard1:some/path                        → /storage/sdcard1/some/path
+     *   /tree/storage/emulated/0/some/path             → /storage/emulated/0/some/path  (already absolute)
+     *
+     * The key fix: if the decoded relative part already starts with '/', it IS
+     * an absolute path — return it directly without prepending /storage/.
      */
-    fun instanceExists(context: Context, name: String): Boolean {
-        val root = File(instancesRoot(context), name.trim())
-        return root.exists() && root.isDirectory
+    fun uriToFilePath(uri: Uri): String {
+        // DocumentFile tree URIs encode the path as the last segment of /tree/<encoded>
+        // Uri.getLastPathSegment() decodes it for us: e.g. "primary:games/MojoLauncher"
+        val encoded = uri.lastPathSegment ?: uri.path ?: return ""
+
+        Log.d(TAG, "uriToFilePath raw segment: '$encoded'")
+
+        return when {
+            // Already an absolute path (starts with /) — use as-is
+            encoded.startsWith("/") -> {
+                Log.d(TAG, "uriToFilePath: already absolute → $encoded")
+                encoded
+            }
+
+            // Standard DocumentProvider format: "primary:<relative>" or "<volume>:<relative>"
+            encoded.contains(":") -> {
+                val colonIdx = encoded.indexOf(':')
+                val volume   = encoded.substring(0, colonIdx)
+                val relative = encoded.substring(colonIdx + 1)
+
+                val base = if (volume.equals("primary", ignoreCase = true))
+                    "/storage/emulated/0"
+                else
+                    "/storage/$volume"
+
+                val path = "$base/$relative"
+                Log.d(TAG, "uriToFilePath: $volume + $relative → $path")
+                path
+            }
+
+            // Fallback: treat as relative to primary storage
+            else -> {
+                val path = "/storage/emulated/0/$encoded"
+                Log.d(TAG, "uriToFilePath: fallback → $path")
+                path
+            }
+        }
     }
 }

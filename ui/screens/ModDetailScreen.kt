@@ -3,6 +3,7 @@ package com.example.modrinthforandroid.ui.screens
 import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -63,35 +64,37 @@ fun triggerDownload(
     title: String,
     projectType: String
 ) {
-    // DownloadManager only accepts paths inside the public Downloads folder.
-    // Writing directly to an arbitrary path throws SecurityException on modern Android.
-    //
-    // Strategy:
-    //   1. Download into Downloads/ via DownloadManager (safe, always works)
-    //   2. DownloadWorker waits for completion then moves the file to the real
-    //      instance folder using plain File I/O (works with MANAGE_EXTERNAL_STORAGE)
-    //      and deletes the temp copy from Downloads.
-
     val downloadsDir = android.os.Environment
         .getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
         .also { it.mkdirs() }
 
-    // The real destination e.g. /storage/emulated/0/Mojolauncher/test1/mods/
     val finalDir = InstanceManager.resolveDownloadFolder(context, projectType)
+
+    // DEBUG TOAST — remove once folder is confirmed correct
+    Toast.makeText(context, "→ $finalDir", Toast.LENGTH_LONG).show()
+
+    try { File(finalDir).mkdirs() } catch (_: Exception) {}
 
     val request = DownloadManager.Request(Uri.parse(url))
         .setTitle(title)
         .setDescription("Downloading via Mojorinth…")
-        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
         .setDestinationInExternalPublicDir(
             android.os.Environment.DIRECTORY_DOWNLOADS, filename
         )
         .setAllowedOverMetered(true)
         .setAllowedOverRoaming(false)
 
-    val dm         = context.getSystemService(DownloadManager::class.java)
-    val downloadId = dm.enqueue(request)
-    val notifId    = downloadId.toInt()
+    val dm = context.getSystemService(DownloadManager::class.java)
+
+    val downloadId = try {
+        dm.enqueue(request)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+        return
+    }
+
+    val notifId = downloadId.toInt()
 
     val work = OneTimeWorkRequestBuilder<DownloadWorker>()
         .setInputData(workDataOf(
@@ -170,9 +173,8 @@ fun ModDetailScreen(
 
 @Composable
 private fun ModDetailContent(project: ModProject, versions: List<ModVersion>, context: Context) {
-    var selectedTab      by remember { mutableIntStateOf(0) }
-    // Tracks which version IDs have been downloaded this session (can download again with warning)
-    var downloadedIds    by remember { mutableStateOf(setOf<String>()) }
+    var selectedTab       by remember { mutableIntStateOf(0) }
+    var downloadedIds     by remember { mutableStateOf(setOf<String>()) }
     var showDownloadSheet by remember { mutableStateOf(false) }
 
     val tabs = buildList {
@@ -247,8 +249,7 @@ private fun ModDetailHeader(
     downloadedIds: Set<String>,
     onDownloadClick: () -> Unit
 ) {
-    val latestVersion   = versions.firstOrNull { it.versionType == "release" } ?: versions.firstOrNull()
-    val isAnyDownloaded = versions.any { downloadedIds.contains(it.id) }
+    val latestVersion = versions.firstOrNull { it.versionType == "release" } ?: versions.firstOrNull()
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -291,9 +292,7 @@ private fun ModDetailHeader(
                 onClick  = onDownloadClick,
                 modifier = Modifier.fillMaxWidth(),
                 shape    = RoundedCornerShape(10.dp),
-                colors   = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
+                colors   = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = PaddingValues(vertical = 14.dp)
             ) {
                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = null,
@@ -359,8 +358,6 @@ private fun DownloadPickerSheet(
 
     var selectedMc     by remember { mutableStateOf<String?>(null) }
     var selectedLoader by remember { mutableStateOf<String?>(null) }
-
-    // Version to show a duplicate warning for before downloading
     var pendingDownloadVersion by remember { mutableStateOf<ModVersion?>(null) }
 
     val filteredVersions = remember(versions, selectedMc, selectedLoader) {
@@ -371,7 +368,6 @@ private fun DownloadPickerSheet(
         }
     }
 
-    // Duplicate-download warning dialog
     pendingDownloadVersion?.let { version ->
         AlertDialog(
             onDismissRequest = { pendingDownloadVersion = null },
@@ -390,8 +386,7 @@ private fun DownloadPickerSheet(
                             }
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Don't warn me again",
-                            style = MaterialTheme.typography.bodySmall,
+                        Text("Don't warn me again", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                     }
                 }
@@ -426,7 +421,6 @@ private fun DownloadPickerSheet(
         ) {
             Text("Download ${project.title}", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold)
-
             Spacer(modifier = Modifier.height(16.dp))
 
             Text("Minecraft Version", style = MaterialTheme.typography.labelMedium,
@@ -625,20 +619,16 @@ private fun PickerVersionCard(
                 }
             }
 
-            // ── Expandable changelog ───────────────────────────────────────
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                     Spacer(modifier = Modifier.height(10.dp))
-
-                    // All MC versions when expanded
                     if (mcVersions.size > 3) {
                         Text("All MC versions:", style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         Spacer(modifier = Modifier.height(4.dp))
-                        // Simple wrap layout using chunked rows
                         mcVersions.chunked(5).forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier.padding(bottom = 4.dp)) {
@@ -654,7 +644,6 @@ private fun PickerVersionCard(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-
                     Text("Changelog", style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
@@ -669,12 +658,10 @@ private fun PickerVersionCard(
                 }
             }
 
-            // Tap hint
             Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.Center) {
                 Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp
-                    else Icons.Default.KeyboardArrowDown,
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = if (expanded) "Collapse" else "Show changelog",
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
@@ -684,7 +671,7 @@ private fun PickerVersionCard(
     }
 }
 
-// ─── Versions Tab (full list) ─────────────────────────────────────────────────
+// ─── Versions Tab ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun VersionsTab(
@@ -699,7 +686,6 @@ private fun VersionsTab(
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var pendingDownloadVersion by remember { mutableStateOf<ModVersion?>(null) }
 
-    // Duplicate-download warning dialog for the Versions tab
     pendingDownloadVersion?.let { version ->
         AlertDialog(
             onDismissRequest = { pendingDownloadVersion = null },
@@ -718,8 +704,7 @@ private fun VersionsTab(
                             }
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Don't warn me again",
-                            style = MaterialTheme.typography.bodySmall,
+                        Text("Don't warn me again", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                     }
                 }
@@ -824,7 +809,6 @@ private fun VersionCard(
         modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // ── Header row ────────────────────────────────────────────────
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -925,13 +909,11 @@ private fun VersionCard(
                 }
             }
 
-            // ── Expandable changelog ───────────────────────────────────────
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                     Spacer(modifier = Modifier.height(10.dp))
-
                     if (mcVersions.size > 5) {
                         Text("All MC versions:", style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
@@ -952,7 +934,6 @@ private fun VersionCard(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-
                     Text("Changelog", style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
@@ -967,12 +948,10 @@ private fun VersionCard(
                 }
             }
 
-            // Expand/collapse chevron
             Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 horizontalArrangement = Arrangement.Center) {
                 Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp
-                    else Icons.Default.KeyboardArrowDown,
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = if (expanded) "Collapse" else "Show changelog",
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
@@ -1104,11 +1083,9 @@ private fun FullscreenImageViewer(imageUrl: String, onDismiss: () -> Unit) {
 @Composable
 private fun StatChip(icon: ImageVector, label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
+        Surface(shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-            modifier = Modifier.padding(bottom = 4.dp)
-        ) {
+            modifier = Modifier.padding(bottom = 4.dp)) {
             Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1125,11 +1102,9 @@ private fun StatChip(icon: ImageVector, label: String, value: String) {
 
 @Composable
 private fun LoaderChip(label: String) {
-    Surface(
-        shape  = RoundedCornerShape(20.dp),
-        color  = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
-    ) {
+    Surface(shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))) {
         Text(label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Medium)
@@ -1148,10 +1123,6 @@ private fun CategoryChip(label: String) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Convert a semver-ish MC version string like "1.20.4" into an integer key
- * so we can sort numerically (e.g. 1.20.4 > 1.9 correctly).
- */
 private fun versionKey(v: String): Int {
     val parts = v.split(".").mapNotNull { it.toIntOrNull() }
     val major = parts.getOrElse(0) { 0 }

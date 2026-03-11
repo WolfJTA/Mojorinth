@@ -24,10 +24,8 @@ fun SettingsScreen(
     val context  = LocalContext.current
     val settings = remember { AppSettings.get(context) }
 
-    var theme           by remember { mutableStateOf(settings.theme) }
-    var dupWarning      by remember { mutableStateOf(settings.showDuplicateWarning) }
-    var mojoPath        by remember { mutableStateOf(settings.mojoInstancesPath) }
-    var editingMojoPath by remember { mutableStateOf(false) }
+    var theme      by remember { mutableStateOf(settings.theme) }
+    var dupWarning by remember { mutableStateOf(settings.showDuplicateWarning) }
 
     val projectTypes = AppSettings.TYPE_FOLDER_DEFAULTS.keys.toList()
     val folderState  = remember {
@@ -91,33 +89,6 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
             }
 
-            // ── MojoLauncher ──────────────────────────────────────────────
-            SettingsSection("MojoLauncher") {
-                Text("Instances path",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface)
-                Text("Where MojoLauncher stores its game instances.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = mojoPath.split("/").takeLast(3).joinToString("/"),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = { editingMojoPath = true },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) { Text("Edit", style = MaterialTheme.typography.labelSmall) }
-                }
-            }
-
             // ── Downloads ─────────────────────────────────────────────────
             SettingsSection("Downloads") {
                 Row(modifier = Modifier.fillMaxWidth(),
@@ -143,9 +114,9 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Download Folders ──────────────────────────────────────────
-            SettingsSection("Download Folders") {
-                Text("Fallback folders used when no instance is active.",
+            // ── Fallback Download Folders ──────────────────────────────────
+            SettingsSection("Fallback Download Folders") {
+                Text("Used when no instances folder is selected on the home screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 Spacer(modifier = Modifier.height(12.dp))
@@ -176,43 +147,7 @@ fun SettingsScreen(
         }
     }
 
-    // ── MojoLauncher path dialog ──────────────────────────────────────────
-    if (editingMojoPath) {
-        AlertDialog(
-            onDismissRequest = { editingMojoPath = false },
-            title = { Text("MojoLauncher Instances Path") },
-            text = {
-                Column {
-                    Text("Enter the full path to your MojoLauncher instances folder.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Default: ${AppSettings.DEFAULT_MOJO_INSTANCES_PATH}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = mojoPath,
-                        onValueChange = { mojoPath = it },
-                        singleLine = true,
-                        label = { Text("Path") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    settings.mojoInstancesPath = mojoPath
-                    editingMojoPath = false
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingMojoPath = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    // ── Download folder edit dialog ───────────────────────────────────────
+    // ── Fallback folder edit dialog ───────────────────────────────────────
     if (editingType != null) {
         AlertDialog(
             onDismissRequest = { editingType = null },
