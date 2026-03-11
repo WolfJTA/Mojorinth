@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.formatNumber
@@ -47,7 +46,6 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -133,10 +131,8 @@ private fun HomeContent(
             bottom = innerPadding.calculateBottomPadding() + 16.dp
         )
     ) {
-        // ── Instance picker ───────────────────────────────────────────────
         item { InstancePickerCard() }
 
-        // ── Browse shortcuts ──────────────────────────────────────────────
         item {
             Spacer(Modifier.height(20.dp))
             SectionHeader("Browse", "What are you looking for?")
@@ -144,7 +140,6 @@ private fun HomeContent(
             BrowseGrid(onBrowseType = onBrowseType)
         }
 
-        // ── Trending Mods ─────────────────────────────────────────────────
         if (uiState.trendingMods.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -155,7 +150,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Popular Modpacks ──────────────────────────────────────────────
         if (uiState.trendingModpacks.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -166,7 +160,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Top Shaders ───────────────────────────────────────────────────
         if (uiState.trendingShaders.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -177,7 +170,6 @@ private fun HomeContent(
             }
         }
 
-        // ── Recently Updated ──────────────────────────────────────────────
         if (uiState.newlyUpdated.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -199,14 +191,11 @@ private fun InstancePickerCard() {
     val context      = LocalContext.current
     val focusManager = LocalFocusManager.current
 
-    // Mirror InstanceManager state into local compose state so the card recomposes
     var activeName  by remember { mutableStateOf(InstanceManager.activeInstanceName) }
     var rootDisplay by remember { mutableStateOf(InstanceManager.rootDisplayPath) }
     var instances   by remember { mutableStateOf(InstanceManager.listInstances(context)) }
 
-    // ACTION_OPEN_DOCUMENT_TREE — lets the user pick the MojoLauncher instances root.
-    // This is the correct approach for modern Android (no MANAGE_EXTERNAL_STORAGE needed
-    // just to browse; the content:// URI is persisted via setRootFromUri).
+    // System folder picker — user picks the MojoLauncher instances root once
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -214,7 +203,7 @@ private fun InstancePickerCard() {
             InstanceManager.setRootFromUri(context, uri)
             rootDisplay = InstanceManager.rootDisplayPath
             instances   = InstanceManager.listInstances(context)
-            activeName  = null   // clear stale active instance when root changes
+            activeName  = null
         }
     }
 
@@ -264,37 +253,39 @@ private fun InstancePickerCard() {
             Spacer(Modifier.height(14.dp))
 
             // ── Active instance chip ──────────────────────────────────────
-            if (activeName != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(green.copy(alpha = 0.12f))
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("📁", fontSize = 16.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text       = activeName!!,
-                        style      = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color      = green,
-                        modifier   = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick  = {
-                            InstanceManager.clearActiveInstance(context)
-                            activeName = null
-                        },
-                        modifier = Modifier.size(28.dp)
+            AnimatedVisibility(visible = activeName != null) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(green.copy(alpha = 0.12f))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Close, "Clear instance",
-                            tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp))
+                        Text("📁", fontSize = 16.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text       = activeName ?: "",
+                            style      = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = green,
+                            modifier   = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick  = {
+                                InstanceManager.clearActiveInstance(context)
+                                activeName = null
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, "Clear instance",
+                                tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp))
+                        }
                     }
+                    Spacer(Modifier.height(10.dp))
                 }
-                Spacer(Modifier.height(10.dp))
             }
 
             // ── Root folder row ───────────────────────────────────────────
@@ -334,50 +325,73 @@ private fun InstancePickerCard() {
                 }
             }
 
-            // ── Instance list (shown when root is set and instances exist) ─
+            // ── Scrollable instance list ──────────────────────────────────
             AnimatedVisibility(visible = instances.isNotEmpty()) {
-                Column(modifier = Modifier.padding(top = 10.dp)) {
-                    Text("Found on device:",
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Text(
+                        "${instances.size} instance${if (instances.size != 1) "s" else ""} found:",
                         style    = MaterialTheme.typography.labelSmall,
                         color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(bottom = 4.dp))
-                    instances.take(5).forEach { name ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    InstanceManager.setActiveInstance(context, name)
-                                    activeName = InstanceManager.activeInstanceName
-                                    focusManager.clearFocus()
-                                }
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    // Fixed-height scrollable list so the card doesn't grow unbounded
+                    Surface(
+                        shape          = RoundedCornerShape(10.dp),
+                        color          = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
+                        tonalElevation = 0.dp,
+                        modifier       = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                    ) {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("📁", fontSize = 14.sp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                name,
-                                style      = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color      = if (name == activeName) green
-                                else MaterialTheme.colorScheme.onSurface,
-                                modifier   = Modifier.weight(1f)
-                            )
-                            if (name == activeName) {
-                                Icon(Icons.Default.Check, null,
-                                    modifier = Modifier.size(14.dp), tint = green)
+                            items(instances) { name ->
+                                val isActive = name == activeName
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isActive) green.copy(alpha = 0.08f)
+                                            else Color.Transparent
+                                        )
+                                        .clickable {
+                                            InstanceManager.setActiveInstance(context, name)
+                                            activeName = InstanceManager.activeInstanceName
+                                            focusManager.clearFocus()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        name,
+                                        style      = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                        color      = if (isActive) green
+                                        else MaterialTheme.colorScheme.onSurface,
+                                        modifier   = Modifier.weight(1f)
+                                    )
+                                    if (isActive) {
+                                        Icon(Icons.Default.Check, null,
+                                            modifier = Modifier.size(14.dp), tint = green)
+                                    }
+                                }
+                                if (name != instances.last()) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                }
                             }
                         }
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                     }
                 }
             }
 
-            // ── Tip: root set but no instances found ──────────────────────
+            // ── Tips ──────────────────────────────────────────────────────
             if (rootDisplay != null && instances.isEmpty()) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     "No instance subfolders found. Make sure you selected the right folder.",
                     style      = MaterialTheme.typography.labelSmall,
@@ -386,9 +400,8 @@ private fun InstancePickerCard() {
                 )
             }
 
-            // ── Tip: nothing set at all ───────────────────────────────────
             if (rootDisplay == null) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     "Tap \"Pick folder\" to select your MojoLauncher instances directory. " +
                             "Downloads will go to fallback folders until then.",

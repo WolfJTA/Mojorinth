@@ -27,15 +27,6 @@ fun SettingsScreen(
     var theme      by remember { mutableStateOf(settings.theme) }
     var dupWarning by remember { mutableStateOf(settings.showDuplicateWarning) }
 
-    val projectTypes = AppSettings.TYPE_FOLDER_DEFAULTS.keys.toList()
-    val folderState  = remember {
-        mutableStateMapOf<String, String>().also { map ->
-            projectTypes.forEach { map[it] = settings.getDownloadFolder(it) }
-        }
-    }
-    var editingType by remember { mutableStateOf<String?>(null) }
-    var editingPath by remember { mutableStateOf("") }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -113,73 +104,7 @@ fun SettingsScreen(
                     )
                 }
             }
-
-            // ── Fallback Download Folders ──────────────────────────────────
-            SettingsSection("Fallback Download Folders") {
-                Text("Used when no instances folder is selected on the home screen.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                Spacer(modifier = Modifier.height(12.dp))
-                projectTypes.forEach { type ->
-                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(AppSettings.TYPE_FOLDER_DEFAULTS[type] ?: type,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface)
-                            Text(folderState[type]?.split("/")?.takeLast(2)?.joinToString("/") ?: "",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                        }
-                        OutlinedButton(
-                            onClick = { editingType = type; editingPath = folderState[type] ?: "" },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) { Text("Edit", style = MaterialTheme.typography.labelSmall) }
-                    }
-                    if (type != projectTypes.last())
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                }
-            }
         }
-    }
-
-    // ── Fallback folder edit dialog ───────────────────────────────────────
-    if (editingType != null) {
-        AlertDialog(
-            onDismissRequest = { editingType = null },
-            title = { Text("Edit Folder — ${AppSettings.TYPE_FOLDER_DEFAULTS[editingType] ?: editingType}") },
-            text = {
-                Column {
-                    Text("Enter the full path where ${AppSettings.TYPE_FOLDER_DEFAULTS[editingType]} should be saved.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = editingPath,
-                        onValueChange = { editingPath = it },
-                        singleLine = true,
-                        label = { Text("Path") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    editingType?.let { type ->
-                        settings.setDownloadFolder(type, editingPath)
-                        folderState[type] = editingPath
-                    }
-                    editingType = null
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingType = null }) { Text("Cancel") }
-            }
-        )
     }
 }
 
