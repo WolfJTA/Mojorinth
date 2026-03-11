@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
@@ -170,33 +171,80 @@ fun ModDetailScreen(
             }
     }
 
-    // Helper to kick off a download and start observing its WorkInfo
-    fun startDownload(version: ModVersion, project: ModProject) {
+    val repository     = remember { com.example.modrinthforandroid.data.ModrinthRepository() }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Snackbar message for the dependency toast
+    var toastMessage by remember { mutableStateOf<String?>(null) }
+
+    // Enqueue one file download and register it in downloadInfoMap
+    fun enqueueOne(version: ModVersion, displayTitle: String, projectType: String) {
         val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull()
         ?: return
-
-        // Mark as queued immediately for instant UI feedback
         downloadInfoMap = downloadInfoMap + (version.id to VersionDownloadInfo(
             versionId = version.id,
             state     = DownloadState.QUEUED,
             progress  = 0
         ))
-
         val workerId = triggerDownload(
             context     = context,
             url         = file.url,
             filename    = file.filename,
-            title       = "${project.title} ${version.name}",
-            projectType = project.projectType
+            title       = displayTitle,
+            projectType = projectType
         )
-
-        // Update map with the real worker UUID so we can observe it
         downloadInfoMap = downloadInfoMap + (version.id to VersionDownloadInfo(
             versionId = version.id,
             workerId  = workerId,
             state     = DownloadState.DOWNLOADING,
             progress  = 0
         ))
+    }
+
+    // Main download entry point — resolves + bundles required dependencies
+    fun startDownload(version: ModVersion, project: ModProject) {
+        val instanceConfig = InstanceManager.activeInstanceConfig
+
+        // Always enqueue the main mod immediately for instant feedback
+        enqueueOne(version, "${project.title} ${version.name}", project.projectType)
+
+        // If we have an active instance, resolve dependencies in the background
+        if (instanceConfig != null && version.dependencies.any { it.isRequired || it.isOptional }) {
+            coroutineScope.launch {
+                val resolved = try {
+                    repository.resolveRequiredDependencies(
+                        version    = version,
+                        mcVersion  = instanceConfig.mcVersion,
+                        loaderSlug = instanceConfig.loaderSlug
+                    )
+                } catch (e: Exception) { emptyList() }
+
+                val required = resolved.filter { !it.isOptional && it.version != null }
+                val optional = resolved.filter {  it.isOptional && it.version != null }
+
+                // Enqueue all required deps
+                required.forEach { dep ->
+                    dep.version?.let { depVer ->
+                        enqueueOne(
+                            version      = depVer,
+                            displayTitle = "Dependency: ${depVer.name}",
+                            projectType  = "mod"
+                        )
+                    }
+                }
+
+                // Build toast message
+                val depCount = required.size
+                toastMessage = when {
+                    depCount == 0 && optional.isNotEmpty() ->
+                        "Downloading ${project.title} (${optional.size} optional dep${if (optional.size != 1) "s" else ""} not included)"
+                    depCount > 0 ->
+                        "Downloading ${project.title} + $depCount dependenc${if (depCount != 1) "ies" else "y"}"
+                    else ->
+                        null  // no deps — no toast needed
+                }
+            }
+        }
     }
 
     // Observe WorkManager via Flow — one coroutine per active download,
@@ -296,6 +344,26 @@ fun ModDetailScreen(
                         downloadInfoMap = downloadInfoMap,
                         onStartDownload = { version -> startDownload(version, state.project) }
                     )
+            }
+
+            // ── Dependency toast ─────────────────────────────────────────
+            toastMessage?.let { msg ->
+                LaunchedEffect(msg) {
+                    kotlinx.coroutines.delay(4_000)
+                    toastMessage = null
+                }
+                Snackbar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+                    action = {
+                        TextButton(onClick = { toastMessage = null }) {
+                            Text("OK", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                ) {
+                    Text(msg, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }

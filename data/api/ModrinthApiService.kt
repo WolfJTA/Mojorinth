@@ -10,11 +10,11 @@ import retrofit2.http.Query
 interface ModrinthApiService {
     @GET("search")
     suspend fun searchProjects(
-        @Query("query") query: String = "",
-        @Query("limit") limit: Int = 20,
+        @Query("query")  query: String = "",
+        @Query("limit")  limit: Int = 20,
         @Query("offset") offset: Int = 0,
         @Query("facets") facets: String? = null,
-        @Query("index") index: String = "relevance"
+        @Query("index")  index: String = "relevance"
     ): SearchResponse
 
     @GET("project/{id}")
@@ -25,4 +25,8 @@ interface ModrinthApiService {
 
     @GET("project/{id}/version")
     suspend fun getProjectVersions(@Path("id") id: String): List<ModVersion>
+
+    /** Fetch a single version by its version ID */
+    @GET("version/{id}")
+    suspend fun getVersion(@Path("id") id: String): ModVersion
 }

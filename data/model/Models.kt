@@ -26,7 +26,12 @@ data class ModProject(
 
 data class License(val id: String, val name: String, val url: String?)
 
-data class GalleryImage(val url: String, val featured: Boolean, val title: String?, val description: String?)
+data class GalleryImage(
+    val url: String,
+    val featured: Boolean,
+    val title: String?,
+    val description: String?
+)
 
 data class SearchResult(
     @SerializedName("project_id") val projectId: String,
@@ -39,7 +44,12 @@ data class SearchResult(
     @SerializedName("date_modified") val dateModified: String
 )
 
-data class SearchResponse(val hits: List<SearchResult>, val offset: Int, val limit: Int, val total_hits: Int)
+data class SearchResponse(
+    val hits: List<SearchResult>,
+    val offset: Int,
+    val limit: Int,
+    val total_hits: Int
+)
 
 data class ModVersion(
     val id: String,
@@ -51,7 +61,9 @@ data class ModVersion(
     val changelog: String?,
     @SerializedName("date_published") val datePublished: String,
     val downloads: Int,
-    val files: List<ModVersionFile>
+    val files: List<ModVersionFile>,
+    // ── Dependencies ──────────────────────────────────────────────────────
+    val dependencies: List<ModDependency> = emptyList()
 )
 
 data class ModVersionFile(
@@ -60,3 +72,28 @@ data class ModVersionFile(
     val primary: Boolean,
     val size: Long
 )
+
+/**
+ * A dependency declared by a [ModVersion].
+ *
+ * [dependencyType] is one of:
+ *   "required"      — must be installed for this mod to work
+ *   "optional"      — recommended but not required
+ *   "incompatible"  — must NOT be installed alongside this mod
+ *   "embedded"      — bundled inside the mod jar, no separate download needed
+ *
+ * Either [versionId] or [projectId] will be non-null.
+ * If [versionId] is set, that exact version is required.
+ * If only [projectId] is set, any version of that project satisfies the dep.
+ */
+data class ModDependency(
+    @SerializedName("version_id")      val versionId: String?,
+    @SerializedName("project_id")      val projectId: String?,
+    @SerializedName("file_name")       val fileName: String?,
+    @SerializedName("dependency_type") val dependencyType: String
+) {
+    val isRequired:     Boolean get() = dependencyType == "required"
+    val isOptional:     Boolean get() = dependencyType == "optional"
+    val isIncompatible: Boolean get() = dependencyType == "incompatible"
+    val isEmbedded:     Boolean get() = dependencyType == "embedded"
+}
