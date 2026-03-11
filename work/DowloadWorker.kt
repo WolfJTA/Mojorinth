@@ -2,13 +2,12 @@ package com.example.modrinthforandroid.work
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.app.DownloadManager
+import android.net.Uri
 import android.os.Build
-import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.documentfile.provider.DocumentFile
 import androidx.work.*
 import kotlinx.coroutines.delay
 import java.io.File
@@ -16,21 +15,27 @@ import java.io.File
 const val NOTIF_CHANNEL_ID   = "modrinth_downloads"
 const val NOTIF_CHANNEL_NAME = "Mod Downloads"
 
-const val KEY_DOWNLOAD_ID = "download_id"
-const val KEY_FILENAME    = "filename"
-const val KEY_TITLE       = "title"
-const val KEY_NOTIF_ID    = "notif_id"
-const val KEY_FINAL_DIR   = "final_dir"
-const val KEY_TEMP_PATH   = "temp_path"
-
-private const val TAG = "DownloadWorker"
+const val KEY_DOWNLOAD_ID    = "download_id"
+const val KEY_FILENAME       = "filename"
+const val KEY_TITLE          = "title"
+const val KEY_NOTIF_ID       = "notif_id"
+const val KEY_FINAL_DIR      = "final_dir"       // legacy plain-path fallback (no instance set)
+const val KEY_TEMP_PATH      = "temp_path"
+const val KEY_ROOT_URI       = "root_uri"         // content:// URI string for the instances root
+const val KEY_INSTANCE_NAME  = "instance_name"    // subfolder name e.g. "test1"
+const val KEY_PROJECT_TYPE   = "project_type"     // "mod", "shader", etc.
 
 /**
- * Polls DownloadManager until the download completes, then moves the file
- * from Downloads/ to the real instance folder.
+ * Polls DownloadManager progress and shows a notification. On completion,
+ * moves the file from Downloads/ to the correct instance subfolder.
  *
- * Shows a persistent progress notification while downloading, and a
- * tappable "Download complete" system notification when done.
+ * Two move strategies, tried in order:
+ *   1. SAF (DocumentFile) — used when KEY_ROOT_URI + KEY_INSTANCE_NAME are present.
+ *      This works because the user granted us a persistent content:// URI via
+ *      ACTION_OPEN_DOCUMENT_TREE, so we can write anywhere inside that tree
+ *      without MANAGE_EXTERNAL_STORAGE.
+ *   2. Plain File I/O — fallback when no instance is active (saves to the
+ *      legacy per-type folder inside Downloads/).
  */
 class DownloadWorker(
     private val ctx: Context,
@@ -42,8 +47,8 @@ class DownloadWorker(
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
         ensureChannel()
-        val notif = buildProgressNotif(
-            title         = inputData.getString(KEY_TITLE) ?: "Downloading…",
+        val notif = buildNotif(
+            title         = inputData.getString(KEY_TITLE) ?: "Downloading...",
             filename      = inputData.getString(KEY_FILENAME) ?: "",
             progress      = 0,
             max           = 0,
@@ -55,59 +60,69 @@ class DownloadWorker(
     override suspend fun doWork(): Result {
         ensureChannel()
 
-        val downloadId = inputData.getLong(KEY_DOWNLOAD_ID, -1L)
-        val filename   = inputData.getString(KEY_FILENAME)  ?: "file"
-        val title      = inputData.getString(KEY_TITLE)     ?: "Downloading…"
-        val notifId    = inputData.getInt(KEY_NOTIF_ID, downloadId.toInt())
-        val finalDir   = inputData.getString(KEY_FINAL_DIR)
-        val tempPath   = inputData.getString(KEY_TEMP_PATH)
+        val downloadId   = inputData.getLong(KEY_DOWNLOAD_ID, -1L)
+        val filename     = inputData.getString(KEY_FILENAME)     ?: "file"
+        val title        = inputData.getString(KEY_TITLE)        ?: "Downloading..."
+        val notifId      = inputData.getInt(KEY_NOTIF_ID, downloadId.toInt())
+        val finalDir     = inputData.getString(KEY_FINAL_DIR)
+        val tempPath     = inputData.getString(KEY_TEMP_PATH)
+        val rootUriStr   = inputData.getString(KEY_ROOT_URI)
+        val instanceName = inputData.getString(KEY_INSTANCE_NAME)
+        val projectType  = inputData.getString(KEY_PROJECT_TYPE) ?: "mod"
 
         if (downloadId == -1L) return Result.failure()
 
-        Log.d(TAG, "Starting poll for downloadId=$downloadId finalDir=$finalDir")
-
-        // Poll DownloadManager until done
+        // ── Poll DownloadManager until done ──────────────────────────────
         while (true) {
             val cursor = dm.query(DownloadManager.Query().setFilterById(downloadId))
 
             if (cursor == null || !cursor.moveToFirst()) {
                 cursor?.close()
-                Log.w(TAG, "Cursor empty — download may have been cancelled")
                 break
             }
 
             val status     = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
             val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
             val total      = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-            val reason     = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
             cursor.close()
 
             when (status) {
-                DownloadManager.STATUS_RUNNING,
-                DownloadManager.STATUS_PENDING -> {
+                DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PENDING -> {
                     val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
-                    nm.notify(notifId, buildProgressNotif(title, filename, progress, 100,
+                    nm.notify(notifId, buildNotif(title, filename, progress, 100,
                         indeterminate = total <= 0))
                     setProgress(workDataOf("progress" to progress))
                     delay(750)
                 }
 
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    Log.d(TAG, "Download complete. Moving to finalDir=$finalDir")
-                    nm.cancel(notifId) // dismiss progress notification
-                    if (!finalDir.isNullOrBlank() && !tempPath.isNullOrBlank()) {
-                        moveToFinalDestination(tempPath, finalDir, filename, title)
-                    } else {
-                        // No instance active — stays in Downloads/
-                        showCompletionNotif(title, filename, "Saved to Downloads/")
+                    if (!tempPath.isNullOrBlank()) {
+                        if (!rootUriStr.isNullOrBlank() && !instanceName.isNullOrBlank()) {
+                            // ── Strategy 1: SAF move ──────────────────────
+                            moveViaSaf(
+                                tempPath     = tempPath,
+                                rootUriStr   = rootUriStr,
+                                instanceName = instanceName,
+                                projectType  = projectType,
+                                filename     = filename,
+                                notifId      = notifId,
+                                title        = title
+                            )
+                        } else if (!finalDir.isNullOrBlank()) {
+                            // ── Strategy 2: plain File I/O fallback ───────
+                            moveViaFile(tempPath, finalDir, filename, notifId, title)
+                        } else {
+                            // No instance set — file stays in Downloads/
+                            nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                                indeterminate = false, done = true,
+                                subtitle = "Saved to Downloads/"))
+                        }
                     }
                     return Result.success()
                 }
 
                 DownloadManager.STATUS_FAILED -> {
-                    Log.e(TAG, "Download failed, reason code=$reason")
                     nm.cancel(notifId)
-                    showErrorNotif(title, filename)
                     return Result.failure()
                 }
 
@@ -117,105 +132,136 @@ class DownloadWorker(
         return Result.success()
     }
 
-    // ── File move ─────────────────────────────────────────────────────────
+    // ── SAF move ─────────────────────────────────────────────────────────────
 
-    private fun moveToFinalDestination(
+    private fun moveViaSaf(
         tempPath: String,
-        finalDir: String,
+        rootUriStr: String,
+        instanceName: String,
+        projectType: String,
         filename: String,
+        notifId: Int,
         title: String
     ) {
         try {
+            val rootUri  = Uri.parse(rootUriStr)
+            val rootDoc  = DocumentFile.fromTreeUri(ctx, rootUri)
+                ?: throw IllegalStateException("Cannot open root URI")
+
+            // Navigate/create: <root>/<instanceName>/<subfolder>/
+            val subfolder = projectTypeToSubfolder(projectType)
+            val instanceDoc = rootDoc.findFile(instanceName)
+                ?: rootDoc.createDirectory(instanceName)
+                ?: throw IllegalStateException("Cannot find/create instance folder '$instanceName'")
+            val destDir = instanceDoc.findFile(subfolder)
+                ?: instanceDoc.createDirectory(subfolder)
+                ?: throw IllegalStateException("Cannot find/create subfolder '$subfolder'")
+
+            // Delete existing file with same name to allow overwrite
+            destDir.findFile(filename)?.delete()
+
+            // Create the destination file via SAF
+            val mimeType = mimeTypeFor(filename)
+            val destFile = destDir.createFile(mimeType, filename)
+                ?: throw IllegalStateException("Cannot create destination file '$filename'")
+
+            // Stream temp file → SAF destination
             val src = File(tempPath)
-            val dir = File(finalDir).also {
-                val created = it.mkdirs()
-                Log.d(TAG, "mkdirs($finalDir) = $created, exists=${it.exists()}")
-            }
-            val dest = File(dir, filename)
+            ctx.contentResolver.openOutputStream(destFile.uri, "wt")?.use { out ->
+                src.inputStream().use { it.copyTo(out) }
+            } ?: throw IllegalStateException("Cannot open output stream for ${destFile.uri}")
 
-            Log.d(TAG, "Moving ${src.absolutePath} → ${dest.absolutePath}")
-            Log.d(TAG, "src.exists=${src.exists()} src.length=${src.length()}")
+            // Clean up temp file from Downloads/
+            src.delete()
 
-            if (src.exists()) {
-                src.copyTo(dest, overwrite = true)
-                val deleted = src.delete()
-                Log.d(TAG, "Copy done, src deleted=$deleted, dest.exists=${dest.exists()}")
-                showCompletionNotif(title, filename, "Saved to ${dir.name}/")
-            } else {
-                // File already moved or missing — notify done anyway
-                Log.w(TAG, "Source file not found at $tempPath")
-                showCompletionNotif(title, filename, "Saved to Downloads/")
-            }
+            nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                indeterminate = false, done = true,
+                subtitle = "Saved to $instanceName/$subfolder/"))
+
         } catch (e: Exception) {
-            Log.e(TAG, "Move failed: ${e.message}", e)
-            // File stays in Downloads — still notify the user
-            showCompletionNotif(title, filename, "In Downloads/ (couldn't move: ${e.message})")
+            // SAF move failed — notify with error, file stays in Downloads/
+            nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                indeterminate = false, done = true,
+                subtitle = "In Downloads/ (SAF error: ${e.message})"))
         }
     }
 
-    // ── Notifications ─────────────────────────────────────────────────────
+    // ── Plain File I/O fallback ───────────────────────────────────────────────
 
-    private fun buildProgressNotif(
+    private fun moveViaFile(
+        tempPath: String,
+        finalDir: String,
+        filename: String,
+        notifId: Int,
+        title: String
+    ) {
+        try {
+            val src  = File(tempPath)
+            val dir  = File(finalDir).also { it.mkdirs() }
+            val dest = File(dir, filename)
+
+            if (src.exists()) {
+                src.copyTo(dest, overwrite = true)
+                src.delete()
+                nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                    indeterminate = false, done = true,
+                    subtitle = "Saved to ${dir.name}/"))
+            } else {
+                nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                    indeterminate = false, done = true,
+                    subtitle = "Saved to ${dir.name}/"))
+            }
+        } catch (e: Exception) {
+            nm.notify(notifId, buildNotif(title, filename, 100, 100,
+                indeterminate = false, done = true,
+                subtitle = "In Downloads/ (move failed: ${e.message})"))
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun projectTypeToSubfolder(projectType: String) = when (projectType) {
+        "mod", "modpack" -> "mods"
+        "shader"         -> "shaderpacks"
+        "resourcepack"   -> "resourcepacks"
+        "datapack"       -> "datapacks"
+        "plugin"         -> "plugins"
+        else             -> "mods"
+    }
+
+    private fun mimeTypeFor(filename: String) = when (filename.substringAfterLast('.').lowercase()) {
+        "jar"    -> "application/java-archive"
+        "zip"    -> "application/zip"
+        "mrpack" -> "application/zip"
+        else     -> "application/octet-stream"
+    }
+
+    private fun buildNotif(
         title: String,
         filename: String,
         progress: Int,
         max: Int,
-        indeterminate: Boolean
+        indeterminate: Boolean,
+        done: Boolean = false,
+        subtitle: String? = null
     ) = NotificationCompat.Builder(ctx, NOTIF_CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.stat_sys_download)
-        .setContentTitle(title)
-        .setContentText(filename)
+        .setSmallIcon(
+            if (done) android.R.drawable.stat_sys_download_done
+            else      android.R.drawable.stat_sys_download
+        )
+        .setContentTitle(if (done) "Downloaded: $title" else title)
+        .setContentText(subtitle ?: filename)
         .setProgress(max, progress, indeterminate)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
+        .setOngoing(!done)
+        .setAutoCancel(done)
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
-
-    /**
-     * Tappable "Download complete" notification — opens the Downloads app.
-     */
-    private fun showCompletionNotif(title: String, filename: String, subtitle: String) {
-        // Intent that opens the system Downloads app
-        val openDownloads = Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            ctx, 0, openDownloads,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notif = NotificationCompat.Builder(ctx, NOTIF_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Downloaded: $title")
-            .setContentText(subtitle)
-            .setSubText(filename)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // heads-up on completion
-            .setContentIntent(pendingIntent)
-            .build()
-
-        // Use a unique ID so multiple completions each show their own notification
-        nm.notify(System.currentTimeMillis().toInt(), notif)
-    }
-
-    private fun showErrorNotif(title: String, filename: String) {
-        val notif = NotificationCompat.Builder(ctx, NOTIF_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("Download failed")
-            .setContentText(title)
-            .setSubText(filename)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-        nm.notify(System.currentTimeMillis().toInt(), notif)
-    }
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                NOTIF_CHANNEL_ID, NOTIF_CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT // allows heads-up for completion
-            ).apply { description = "Mod download progress and completion" }
+                NOTIF_CHANNEL_ID, NOTIF_CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW
+            ).apply { description = "Mod download progress" }
             nm.createNotificationChannel(channel)
         }
     }
