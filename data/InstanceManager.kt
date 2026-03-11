@@ -14,6 +14,15 @@ import java.io.File
  * which gives us a persistable content:// URI. We convert that URI to a
  * real file path for DownloadWorker to use with plain File I/O.
  */
+/**
+ * Represents one MojoLauncher instance with both its folder name and the
+ * human-readable display name read from mojo_instance.json.
+ */
+data class InstanceEntry(
+    val folderName: String,   // actual subfolder name used for SAF navigation
+    val displayName: String   // "name" field from mojo_instance.json, or folderName fallback
+)
+
 object InstanceManager {
 
     private const val TAG = "InstanceManager"
@@ -217,6 +226,40 @@ object InstanceManager {
                 ?: emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "listInstances failed", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Returns a list of [InstanceEntry] — one per subfolder — where each entry
+     * has the folder name and the human-readable name from mojo_instance.json
+     * (falls back to the folder name if the config can't be read).
+     *
+     * Reads all instance configs in one SAF traversal. Used by the search UI.
+     */
+    fun listInstancesWithNames(context: Context): List<InstanceEntry> {
+        val uri = rootUri ?: return emptyList()
+        return try {
+            val rootDoc = DocumentFile.fromTreeUri(context, uri) ?: return emptyList()
+            rootDoc.listFiles()
+                .filter { it.isDirectory }
+                .mapNotNull { dir ->
+                    val folderName = dir.name ?: return@mapNotNull null
+                    val displayName = try {
+                        val configFile = dir.findFile(INSTANCE_CONFIG_FILENAME)
+                        if (configFile != null) {
+                            val json = context.contentResolver
+                                .openInputStream(configFile.uri)
+                                ?.bufferedReader()?.use { it.readText() }
+                            val parsed = json?.let { MojoInstance.parse(it) }
+                            parsed?.name?.takeIf { it.isNotBlank() } ?: folderName
+                        } else folderName
+                    } catch (e: Exception) { folderName }
+                    InstanceEntry(folderName = folderName, displayName = displayName)
+                }
+                .sortedBy { it.displayName.lowercase() }
+        } catch (e: Exception) {
+            Log.e(TAG, "listInstancesWithNames failed", e)
             emptyList()
         }
     }

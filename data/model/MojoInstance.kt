@@ -43,6 +43,7 @@ data class MojoInstance(
     val rendererDisplay: String get() = when (renderer) {
         "vulkan_zink"  -> "Vulkan (Zink)"
         "ltw"          -> "LTW (GL4ES)"
+        "opengles3_ltw" -> "OpenGL ES 3 + LTW"
         "gl4es"        -> "GL4ES"
         "virgl"        -> "VirGL"
         "freedreno"    -> "Freedreno"

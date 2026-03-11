@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.modrinthforandroid.data.InstanceEntry
 import com.example.modrinthforandroid.data.InstanceManager
 
 private enum class FolderState { UNSET, WRONG, LOCKED }
@@ -47,7 +50,8 @@ fun InstancePickerCard() {
     }
     var activeName     by remember { mutableStateOf(InstanceManager.activeInstanceName) }
     var rootDisplay    by remember { mutableStateOf(InstanceManager.rootDisplayPath) }
-    var instances      by remember { mutableStateOf(InstanceManager.listInstances(context)) }
+    var instances      by remember { mutableStateOf(InstanceManager.listInstancesWithNames(context)) }
+    var instanceSearch  by remember { mutableStateOf("") }
     var instanceConfig by remember { mutableStateOf(InstanceManager.activeInstanceConfig) }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -57,9 +61,10 @@ fun InstancePickerCard() {
         if (InstanceManager.isCorrectFolder(uri)) {
             InstanceManager.setRootFromUri(context, uri)
             rootDisplay    = InstanceManager.rootDisplayPath
-            instances      = InstanceManager.listInstances(context)
+            instances      = InstanceManager.listInstancesWithNames(context)
             activeName     = null
             instanceConfig = null
+            instanceSearch = ""
             folderState    = FolderState.LOCKED
         } else {
             folderState = FolderState.WRONG
@@ -466,72 +471,140 @@ fun InstancePickerCard() {
                         }
                     }
 
-                    // Instance list
+                    // ── Instance search + list ────────────────────────────
                     if (instances.isNotEmpty()) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
+
+                            // Search bar — filters by display name (from mojo_instance.json)
+                            OutlinedTextField(
+                                value         = instanceSearch,
+                                onValueChange = { instanceSearch = it },
+                                modifier      = Modifier.fillMaxWidth(),
+                                placeholder   = { Text(
+                                    "Search instances…",
+                                    style = MaterialTheme.typography.bodySmall
+                                )},
+                                leadingIcon   = {
+                                    Icon(Icons.Default.Search, null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                },
+                                trailingIcon  = if (instanceSearch.isNotEmpty()) {{
+                                    IconButton(onClick = { instanceSearch = "" },
+                                        modifier = Modifier.size(18.dp)) {
+                                        Icon(Icons.Default.Close, "Clear search",
+                                            modifier = Modifier.size(14.dp))
+                                    }
+                                }} else null,
+                                singleLine    = true,
+                                shape         = RoundedCornerShape(10.dp),
+                                colors        = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor   = green,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                                ),
+                                textStyle = MaterialTheme.typography.bodySmall
+                            )
+
+                            Spacer(Modifier.height(8.dp))
+
+                            val filtered = if (instanceSearch.isBlank()) instances
+                            else instances.filter {
+                                it.displayName.contains(instanceSearch, ignoreCase = true) ||
+                                        it.folderName.contains(instanceSearch, ignoreCase = true)
+                            }
+
                             Text(
-                                "${instances.size} instance${if (instances.size != 1) "s" else ""} found:",
+                                if (instanceSearch.isBlank())
+                                    "${instances.size} instance${if (instances.size != 1) "s" else ""} found:"
+                                else
+                                    "${filtered.size} of ${instances.size} match:",
                                 style    = MaterialTheme.typography.labelSmall,
                                 color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                                 modifier = Modifier.padding(bottom = 6.dp)
                             )
+
                             Surface(
                                 shape    = RoundedCornerShape(10.dp),
                                 color    = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 220.dp)
+                                    .heightIn(max = 240.dp)
                             ) {
-                                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                                    items(instances) { name ->
-                                        val isActive = name == activeName
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(
-                                                    if (isActive) green.copy(alpha = 0.08f)
-                                                    else Color.Transparent
-                                                )
-                                                .clickable {
-                                                    InstanceManager.setActiveInstance(context, name)
-                                                    activeName     = InstanceManager.activeInstanceName
-                                                    instanceConfig = InstanceManager.activeInstanceConfig
-                                                    focusManager.clearFocus()
-                                                }
-                                                .padding(horizontal = 12.dp, vertical = 11.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
-                                            Spacer(Modifier.width(10.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    name,
-                                                    style      = MaterialTheme.typography.bodySmall,
-                                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                                    color      = if (isActive) green
-                                                    else MaterialTheme.colorScheme.onSurface
-                                                )
-                                                if (isActive && instanceConfig != null) {
+                                if (filtered.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(20.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "No instances match: $instanceSearch",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                        )
+                                    }
+                                } else {
+                                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                                        items(filtered, key = { it.folderName }) { entry ->
+                                            val isActive = entry.folderName == activeName
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        if (isActive) green.copy(alpha = 0.08f)
+                                                        else Color.Transparent
+                                                    )
+                                                    .clickable {
+                                                        InstanceManager.setActiveInstance(context, entry.folderName)
+                                                        activeName     = InstanceManager.activeInstanceName
+                                                        instanceConfig = InstanceManager.activeInstanceConfig
+                                                        instanceSearch = ""
+                                                        focusManager.clearFocus()
+                                                    }
+                                                    .padding(horizontal = 12.dp, vertical = 11.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
+                                                Spacer(Modifier.width(10.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    // Display name — from mojo_instance.json
                                                     Text(
-                                                        instanceConfig!!.summary,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = green.copy(alpha = 0.75f)
+                                                        entry.displayName,
+                                                        style      = MaterialTheme.typography.bodySmall,
+                                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                                        color      = if (isActive) green
+                                                        else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    // Folder name shown as subtitle if different
+                                                    if (entry.folderName != entry.displayName) {
+                                                        Text(
+                                                            "📁 ${entry.folderName}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                        )
+                                                    }
+                                                    if (isActive && instanceConfig != null) {
+                                                        Text(
+                                                            instanceConfig!!.summary,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = green.copy(alpha = 0.75f)
+                                                        )
+                                                    }
+                                                }
+                                                if (isActive) {
+                                                    Icon(
+                                                        Icons.Default.Check, null,
+                                                        modifier = Modifier.size(14.dp),
+                                                        tint     = green
                                                     )
                                                 }
                                             }
-                                            if (isActive) {
-                                                Icon(
-                                                    Icons.Default.Check, null,
-                                                    modifier = Modifier.size(14.dp),
-                                                    tint     = green
+                                            if (entry != filtered.last()) {
+                                                HorizontalDivider(
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
                                                 )
                                             }
-                                        }
-                                        if (name != instances.last()) {
-                                            HorizontalDivider(
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
-                                            )
                                         }
                                     }
                                 }

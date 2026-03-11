@@ -42,6 +42,8 @@ import androidx.work.workDataOf
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
+import com.example.modrinthforandroid.data.RendererChangeResult
+import com.example.modrinthforandroid.data.RendererRules
 import com.example.modrinthforandroid.data.model.ModProject
 import com.example.modrinthforandroid.data.model.ModVersion
 import com.example.modrinthforandroid.ui.components.DownloadProgressBanner
@@ -76,9 +78,10 @@ enum class DownloadState { IDLE, QUEUED, DOWNLOADING, DONE, FAILED }
 
 data class VersionDownloadInfo(
     val versionId: String,
+    val projectSlug: String = "",   // used by post-download rules engine
     val workerId: UUID? = null,
     val state: DownloadState = DownloadState.IDLE,
-    val progress: Int = 0          // 0–100
+    val progress: Int = 0          // 0-100
 )
 
 // ─── Download helper ──────────────────────────────────────────────────────────
@@ -177,14 +180,23 @@ fun ModDetailScreen(
     // Snackbar message for the dependency toast
     var toastMessage by remember { mutableStateOf<String?>(null) }
 
+    // Post-download renderer rule result — drives the "we changed your renderer" dialog
+    var rendererChangeResult: RendererChangeResult? by remember { mutableStateOf(null) }
+
     // Enqueue one file download and register it in downloadInfoMap
-    fun enqueueOne(version: ModVersion, displayTitle: String, projectType: String) {
+    fun enqueueOne(
+        version: ModVersion,
+        displayTitle: String,
+        projectType: String,
+        projectSlug: String = ""
+    ) {
         val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull()
         ?: return
         downloadInfoMap = downloadInfoMap + (version.id to VersionDownloadInfo(
-            versionId = version.id,
-            state     = DownloadState.QUEUED,
-            progress  = 0
+            versionId   = version.id,
+            projectSlug = projectSlug,
+            state       = DownloadState.QUEUED,
+            progress    = 0
         ))
         val workerId = triggerDownload(
             context     = context,
@@ -194,10 +206,11 @@ fun ModDetailScreen(
             projectType = projectType
         )
         downloadInfoMap = downloadInfoMap + (version.id to VersionDownloadInfo(
-            versionId = version.id,
-            workerId  = workerId,
-            state     = DownloadState.DOWNLOADING,
-            progress  = 0
+            versionId   = version.id,
+            projectSlug = projectSlug,
+            workerId    = workerId,
+            state       = DownloadState.DOWNLOADING,
+            progress    = 0
         ))
     }
 
@@ -206,7 +219,7 @@ fun ModDetailScreen(
         val instanceConfig = InstanceManager.activeInstanceConfig
 
         // Always enqueue the main mod immediately for instant feedback
-        enqueueOne(version, "${project.title} ${version.name}", project.projectType)
+        enqueueOne(version, "${project.title} ${version.name}", project.projectType, project.slug)
 
         // If we have an active instance, resolve dependencies in the background
         if (instanceConfig != null && version.dependencies.any { it.isRequired || it.isOptional }) {
@@ -271,6 +284,14 @@ fun ModDetailScreen(
                                 state    = newState,
                                 progress = if (newState == DownloadState.DONE) 100 else progress
                             ))
+                            // Phase 3 — post-download renderer rules
+                            if (newState == DownloadState.DONE && info.projectSlug.isNotEmpty()) {
+                                val result = RendererRules.applyIfNeeded(
+                                    context     = context,
+                                    projectSlug = info.projectSlug
+                                )
+                                if (result != null) rendererChangeResult = result
+                            }
                         }
                 }
             }
@@ -366,6 +387,61 @@ fun ModDetailScreen(
                 }
             }
         }
+    }
+
+    // ── Renderer change dialog (Phase 3) ─────────────────────────────────
+    rendererChangeResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { rendererChangeResult = null },
+            title = {
+                Text(
+                    "⚙️  Renderer Updated",
+                    style      = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(result.reason, style = MaterialTheme.typography.bodyMedium)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Before:", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.width(46.dp))
+                                Surface(shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)) {
+                                    Text(result.oldRendererDisplay,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("After:", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.width(46.dp))
+                                Surface(shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)) {
+                                    Text(result.newRendererDisplay,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { rendererChangeResult = null }) { Text("Got it") }
+            }
+        )
     }
 }
 
