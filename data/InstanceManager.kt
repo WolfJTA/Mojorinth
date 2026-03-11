@@ -40,26 +40,72 @@ object InstanceManager {
     /**
      * Call from MainActivity.onCreate — restores state from SharedPreferences.
      */
+    /**
+     * True once a URI that passes [isCorrectFolder] has been accepted and
+     * persisted. Stays true across restarts once set. The card uses this to
+     * decide whether to show the locked state without re-prompting.
+     */
+    var rootValidated: Boolean = false
+        private set
+
     fun init(context: Context) {
         val settings = AppSettings.get(context)
         val uriString = settings.savedInstancesUri
         if (!uriString.isNullOrBlank()) {
-            rootUri = Uri.parse(uriString)
-            rootDisplayPath = settings.savedInstancesDisplayPath
-            Log.d(TAG, "Restored root URI: $rootUri  display: $rootDisplayPath")
+            val uri = Uri.parse(uriString)
+            // Re-validate on every init — ensures stale/wrong saved URIs are caught
+            if (isCorrectFolder(uri)) {
+                rootUri       = uri
+                rootDisplayPath = settings.savedInstancesDisplayPath
+                rootValidated = true
+                Log.d(TAG, "Restored root URI: $rootUri  display: $rootDisplayPath")
+            } else {
+                // Saved URI no longer passes validation — wipe it so user re-picks
+                settings.savedInstancesUri         = null
+                settings.savedInstancesDisplayPath = null
+                settings.savedActiveInstance       = null
+                Log.w(TAG, "Saved URI failed validation on init — cleared")
+            }
         }
         val saved = settings.savedActiveInstance
-        if (!saved.isNullOrBlank()) {
+        if (!saved.isNullOrBlank() && rootValidated) {
             activeInstanceName = saved
             Log.d(TAG, "Restored active instance: $activeInstanceName")
-            // Re-read the config so it's available immediately after app restart
             readInstanceConfig(context, saved)
         }
     }
 
     // ── Root folder ───────────────────────────────────────────────────────────
 
+    /** The exact folder path suffix the user must select. */
+    const val REQUIRED_PATH_SUFFIX = "git.artdeell.mojo/files/instances"
+
+    /**
+     * Validates whether a picked URI points to the correct MojoLauncher
+     * instances folder. Returns true only when the decoded path ends with
+     * [REQUIRED_PATH_SUFFIX].
+     *
+     * The URI last path segment is decoded like:
+     *   primary:Android/data/git.artdeell.mojo/files/instances
+     * so we check after the colon (or the full string if no colon).
+     */
+    fun isCorrectFolder(uri: Uri): Boolean {
+        val segment = uri.lastPathSegment ?: return false
+        // Strip the volume prefix ("primary:", "sdcard1:", etc.) if present
+        val relativePath = if (segment.contains(":"))
+            segment.substringAfter(":") else segment
+        val normalized = relativePath.trimEnd('/')
+        val result = normalized.endsWith(REQUIRED_PATH_SUFFIX, ignoreCase = true)
+        Log.d(TAG, "isCorrectFolder: path='$normalized' → $result")
+        return result
+    }
+
+    /**
+     * Accepts a validated URI and persists it. Call [isCorrectFolder] first —
+     * this function does NOT re-validate.
+     */
     fun setRootFromUri(context: Context, uri: Uri) {
+        rootValidated = true
         context.contentResolver.takePersistableUriPermission(
             uri,
             android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
@@ -81,9 +127,10 @@ object InstanceManager {
     }
 
     fun clearRoot(context: Context) {
-        rootUri = null
-        rootDisplayPath = null
-        activeInstanceName = null
+        rootUri              = null
+        rootDisplayPath      = null
+        rootValidated        = false
+        activeInstanceName   = null
         activeInstanceConfig = null
         val settings = AppSettings.get(context)
         settings.savedInstancesUri = null
