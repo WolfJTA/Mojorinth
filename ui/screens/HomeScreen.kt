@@ -185,25 +185,29 @@ private fun HomeContent(
 
 // ─── Instance Picker Card ─────────────────────────────────────────────────────
 
+// ─── Instance Picker Card ─────────────────────────────────────────────────────
+// Replace the existing InstancePickerCard composable in HomeScreen.kt with this.
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun InstancePickerCard() {
     val context      = LocalContext.current
     val focusManager = LocalFocusManager.current
 
-    var activeName  by remember { mutableStateOf(InstanceManager.activeInstanceName) }
-    var rootDisplay by remember { mutableStateOf(InstanceManager.rootDisplayPath) }
-    var instances   by remember { mutableStateOf(InstanceManager.listInstances(context)) }
+    var activeName     by remember { mutableStateOf(InstanceManager.activeInstanceName) }
+    var rootDisplay    by remember { mutableStateOf(InstanceManager.rootDisplayPath) }
+    var instances      by remember { mutableStateOf(InstanceManager.listInstances(context)) }
+    var instanceConfig by remember { mutableStateOf(InstanceManager.activeInstanceConfig) }
 
-    // System folder picker — user picks the MojoLauncher instances root once
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
             InstanceManager.setRootFromUri(context, uri)
-            rootDisplay = InstanceManager.rootDisplayPath
-            instances   = InstanceManager.listInstances(context)
-            activeName  = null
+            rootDisplay    = InstanceManager.rootDisplayPath
+            instances      = InstanceManager.listInstances(context)
+            activeName     = null
+            instanceConfig = null
         }
     }
 
@@ -232,15 +236,17 @@ private fun InstancePickerCard() {
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("Active Instance",
+                    Text(
+                        "Active Instance",
                         style      = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color      = MaterialTheme.colorScheme.onSurface)
+                        color      = MaterialTheme.colorScheme.onSurface
+                    )
                     Text(
                         text = when {
                             activeName != null  -> "Downloads → …/$activeName"
                             rootDisplay != null -> "Root set — pick an instance below"
-                            else                -> "No instance selected — downloads go to fallback folders"
+                            else                -> "No instance selected"
                         },
                         style    = MaterialTheme.typography.labelSmall,
                         color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
@@ -252,9 +258,10 @@ private fun InstancePickerCard() {
 
             Spacer(Modifier.height(14.dp))
 
-            // ── Active instance chip ──────────────────────────────────────
+            // ── Active instance chip + config badges ──────────────────────
             AnimatedVisibility(visible = activeName != null) {
                 Column {
+                    // Instance name row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -275,15 +282,95 @@ private fun InstancePickerCard() {
                         IconButton(
                             onClick  = {
                                 InstanceManager.clearActiveInstance(context)
-                                activeName = null
+                                activeName     = null
+                                instanceConfig = null
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
-                            Icon(Icons.Default.Close, "Clear instance",
+                            Icon(
+                                Icons.Default.Close, "Clear instance",
                                 tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                modifier = Modifier.size(16.dp))
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
+
+                    // ── Parsed config badges ──────────────────────────────
+                    AnimatedVisibility(visible = instanceConfig != null) {
+                        val config = instanceConfig
+                        if (config != null) {
+                            Column(modifier = Modifier.padding(top = 10.dp)) {
+                                // Row 1: Loader + MC Version
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    InstanceBadge(
+                                        icon  = "⚙️",
+                                        label = "Loader",
+                                        value = if (config.loaderVersion.isNotEmpty())
+                                            "${config.loader} ${config.loaderVersion}"
+                                        else config.loader,
+                                        color = when (config.loader) {
+                                            "Fabric"   -> Color(0xFFDBB155)
+                                            "Forge"    -> Color(0xFF8B5E3C)
+                                            "NeoForge" -> Color(0xFFE87B2B)
+                                            "Quilt"    -> Color(0xFF9B59B6)
+                                            else       -> MaterialTheme.colorScheme.primary
+                                        }
+                                    )
+                                    InstanceBadge(
+                                        icon  = "🟩",
+                                        label = "MC Version",
+                                        value = config.mcVersion,
+                                        color = Color(0xFF5DA85D)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // Row 2: Renderer
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    InstanceBadge(
+                                        icon  = "🖥️",
+                                        label = "Renderer",
+                                        value = config.rendererDisplay,
+                                        color = Color(0xFF4A90D9),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Config read failed notice
+                    AnimatedVisibility(
+                        visible = activeName != null && instanceConfig == null
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(top = 8.dp)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("⚠️", fontSize = 14.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Could not read mojo_instance.json",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+
                     Spacer(Modifier.height(10.dp))
                 }
             }
@@ -303,9 +390,11 @@ private fun InstancePickerCard() {
                             overflow = TextOverflow.Ellipsis
                         )
                     } else {
-                        Text("No instances folder set",
+                        Text(
+                            "No instances folder set",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
                     }
                 }
                 Spacer(Modifier.width(8.dp))
@@ -334,7 +423,6 @@ private fun InstancePickerCard() {
                         color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
-                    // Fixed-height scrollable list so the card doesn't grow unbounded
                     Surface(
                         shape          = RoundedCornerShape(10.dp),
                         color          = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
@@ -343,9 +431,7 @@ private fun InstancePickerCard() {
                             .fillMaxWidth()
                             .heightIn(max = 220.dp)
                     ) {
-                        androidx.compose.foundation.lazy.LazyColumn(
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
                             items(instances) { name ->
                                 val isActive = name == activeName
                                 Row(
@@ -358,7 +444,8 @@ private fun InstancePickerCard() {
                                         )
                                         .clickable {
                                             InstanceManager.setActiveInstance(context, name)
-                                            activeName = InstanceManager.activeInstanceName
+                                            activeName     = InstanceManager.activeInstanceName
+                                            instanceConfig = InstanceManager.activeInstanceConfig
                                             focusManager.clearFocus()
                                         }
                                         .padding(horizontal = 12.dp, vertical = 11.dp),
@@ -366,22 +453,36 @@ private fun InstancePickerCard() {
                                 ) {
                                     Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
                                     Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        name,
-                                        style      = MaterialTheme.typography.bodySmall,
-                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                        color      = if (isActive) green
-                                        else MaterialTheme.colorScheme.onSurface,
-                                        modifier   = Modifier.weight(1f)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            name,
+                                            style      = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                            color      = if (isActive) green
+                                            else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        // Show summary line if this is the active instance
+                                        // and config is loaded
+                                        if (isActive && instanceConfig != null) {
+                                            Text(
+                                                instanceConfig!!.summary,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = green.copy(alpha = 0.75f)
+                                            )
+                                        }
+                                    }
                                     if (isActive) {
-                                        Icon(Icons.Default.Check, null,
-                                            modifier = Modifier.size(14.dp), tint = green)
+                                        Icon(
+                                            Icons.Default.Check, null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint     = green
+                                        )
                                     }
                                 }
                                 if (name != instances.last()) {
                                     HorizontalDivider(
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                    )
                                 }
                             }
                         }
@@ -403,11 +504,51 @@ private fun InstancePickerCard() {
             if (rootDisplay == null) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Tap \"Pick folder\" to select your MojoLauncher instances directory. " +
-                            "Downloads will go to fallback folders until then.",
+                    "Tap \"Pick folder\" to select your MojoLauncher instances directory.",
                     style      = MaterialTheme.typography.labelSmall,
                     color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                     lineHeight = 16.sp
+                )
+            }
+        }
+    }
+}
+
+// ─── Instance badge chip ──────────────────────────────────────────────────────
+
+@Composable
+private fun InstanceBadge(
+    icon: String,
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape    = RoundedCornerShape(8.dp),
+        color    = color.copy(alpha = 0.10f),
+        modifier = modifier
+    ) {
+        Row(
+            modifier          = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(icon, fontSize = 13.sp)
+            Spacer(Modifier.width(6.dp))
+            Column {
+                Text(
+                    label,
+                    style  = MaterialTheme.typography.labelSmall,
+                    color  = color.copy(alpha = 0.75f),
+                    fontSize = 9.sp
+                )
+                Text(
+                    value,
+                    style      = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color      = color,
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis
                 )
             }
         }

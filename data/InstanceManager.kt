@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.example.modrinthforandroid.data.model.MojoInstance
 import java.io.File
 
 /**
@@ -16,6 +17,7 @@ import java.io.File
 object InstanceManager {
 
     private const val TAG = "InstanceManager"
+    private const val INSTANCE_CONFIG_FILENAME = "mojo_instance.json"
 
     // Persisted content:// URI for the instances root folder
     var rootUri: Uri? = null
@@ -27,6 +29,10 @@ object InstanceManager {
 
     // The subfolder name the user selected (e.g. "test1")
     var activeInstanceName: String? = null
+        private set
+
+    // Parsed config for the active instance — null if not yet read or failed
+    var activeInstanceConfig: MojoInstance? = null
         private set
 
     // ── Init ──────────────────────────────────────────────────────────────────
@@ -46,17 +52,14 @@ object InstanceManager {
         if (!saved.isNullOrBlank()) {
             activeInstanceName = saved
             Log.d(TAG, "Restored active instance: $activeInstanceName")
+            // Re-read the config so it's available immediately after app restart
+            readInstanceConfig(context, saved)
         }
     }
 
     // ── Root folder ───────────────────────────────────────────────────────────
 
-    /**
-     * Called when the user picks a folder via ACTION_OPEN_DOCUMENT_TREE.
-     * Takes persistable permission and saves to prefs.
-     */
     fun setRootFromUri(context: Context, uri: Uri) {
-        // Persist permission so it survives app restarts
         context.contentResolver.takePersistableUriPermission(
             uri,
             android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
@@ -64,7 +67,6 @@ object InstanceManager {
         )
         rootUri = uri
 
-        // Build a human-readable display path
         val docFile = DocumentFile.fromTreeUri(context, uri)
         rootDisplayPath = docFile?.uri?.path
             ?.replace("/tree/", "")
@@ -82,6 +84,7 @@ object InstanceManager {
         rootUri = null
         rootDisplayPath = null
         activeInstanceName = null
+        activeInstanceConfig = null
         val settings = AppSettings.get(context)
         settings.savedInstancesUri = null
         settings.savedInstancesDisplayPath = null
@@ -95,19 +98,67 @@ object InstanceManager {
         activeInstanceName = name
         AppSettings.get(context).savedActiveInstance = name
         Log.d(TAG, "Active instance set: $name")
+        // Parse the config file immediately so the UI can reflect it
+        readInstanceConfig(context, name)
     }
 
     fun clearActiveInstance(context: Context) {
         activeInstanceName = null
+        activeInstanceConfig = null
         AppSettings.get(context).savedActiveInstance = null
         Log.d(TAG, "Active instance cleared")
     }
 
-    // ── Instance listing ──────────────────────────────────────────────────────
+    // ── Instance config reading ───────────────────────────────────────────────
 
     /**
-     * Lists subfolder names inside the root URI using DocumentFile.
+     * Reads and parses mojo_instance.json from the given instance subfolder.
+     * Result is stored in [activeInstanceConfig] and also returned for
+     * callers that want it immediately.
+     *
+     * Uses SAF (DocumentFile) so no MANAGE_EXTERNAL_STORAGE is needed.
      */
+    fun readInstanceConfig(context: Context, instanceName: String): MojoInstance? {
+        val uri = rootUri ?: run {
+            Log.w(TAG, "readInstanceConfig: no root URI set")
+            return null
+        }
+
+        return try {
+            val rootDoc = DocumentFile.fromTreeUri(context, uri)
+                ?: throw IllegalStateException("Cannot open root URI")
+
+            val instanceDoc = rootDoc.findFile(instanceName)
+                ?: throw IllegalStateException("Instance folder '$instanceName' not found")
+
+            val configFile = instanceDoc.findFile(INSTANCE_CONFIG_FILENAME)
+                ?: throw IllegalStateException("$INSTANCE_CONFIG_FILENAME not found in '$instanceName'")
+
+            val json = context.contentResolver
+                .openInputStream(configFile.uri)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                ?: throw IllegalStateException("Could not read $INSTANCE_CONFIG_FILENAME")
+
+            val parsed = MojoInstance.parse(json)
+            activeInstanceConfig = parsed
+
+            if (parsed != null) {
+                Log.d(TAG, "Parsed config: ${parsed.summary} renderer=${parsed.renderer}")
+            } else {
+                Log.w(TAG, "Failed to parse $INSTANCE_CONFIG_FILENAME")
+            }
+
+            parsed
+        } catch (e: Exception) {
+            Log.e(TAG, "readInstanceConfig failed for '$instanceName'", e)
+            activeInstanceConfig = null
+            null
+        }
+    }
+
+    // ── Instance listing ──────────────────────────────────────────────────────
+
     fun listInstances(context: Context): List<String> {
         val uri = rootUri ?: return emptyList()
         return try {
@@ -125,10 +176,6 @@ object InstanceManager {
 
     // ── Download folder resolution ────────────────────────────────────────────
 
-    /**
-     * Returns the real file-system path for [projectType] files given the
-     * active instance. Falls back to AppSettings legacy folder if no instance.
-     */
     fun resolveDownloadFolder(context: Context, projectType: String): String {
         val instanceName = activeInstanceName
         val uri = rootUri
@@ -143,66 +190,27 @@ object InstanceManager {
                 "plugin"         -> "plugins"
                 else             -> "mods"
             }
-            val resolved = "$rootPath/$instanceName/$sub"
-            Log.d(TAG, "resolveDownloadFolder → $resolved")
-            resolved
+            "$rootPath/$instanceName/$sub"
         } else {
-            val fallback = AppSettings.get(context).getDownloadFolder(projectType)
-            Log.d(TAG, "resolveDownloadFolder fallback → $fallback")
-            fallback
+            AppSettings.get(context).getDownloadFolder(projectType)
         }
     }
 
     // ── URI → file path ───────────────────────────────────────────────────────
 
-    /**
-     * Converts a DocumentTree content:// URI to an absolute file path.
-     *
-     * URI tree path examples from Android:
-     *   /tree/primary:games/MojoLauncher/instances     → /storage/emulated/0/games/MojoLauncher/instances
-     *   /tree/primary:Android/data/...                 → /storage/emulated/0/Android/data/...
-     *   /tree/sdcard1:some/path                        → /storage/sdcard1/some/path
-     *   /tree/storage/emulated/0/some/path             → /storage/emulated/0/some/path  (already absolute)
-     *
-     * The key fix: if the decoded relative part already starts with '/', it IS
-     * an absolute path — return it directly without prepending /storage/.
-     */
     fun uriToFilePath(uri: Uri): String {
-        // DocumentFile tree URIs encode the path as the last segment of /tree/<encoded>
-        // Uri.getLastPathSegment() decodes it for us: e.g. "primary:games/MojoLauncher"
         val encoded = uri.lastPathSegment ?: uri.path ?: return ""
-
-        Log.d(TAG, "uriToFilePath raw segment: '$encoded'")
-
         return when {
-            // Already an absolute path (starts with /) — use as-is
-            encoded.startsWith("/") -> {
-                Log.d(TAG, "uriToFilePath: already absolute → $encoded")
-                encoded
-            }
-
-            // Standard DocumentProvider format: "primary:<relative>" or "<volume>:<relative>"
+            encoded.startsWith("/") -> encoded
             encoded.contains(":") -> {
                 val colonIdx = encoded.indexOf(':')
                 val volume   = encoded.substring(0, colonIdx)
                 val relative = encoded.substring(colonIdx + 1)
-
                 val base = if (volume.equals("primary", ignoreCase = true))
-                    "/storage/emulated/0"
-                else
-                    "/storage/$volume"
-
-                val path = "$base/$relative"
-                Log.d(TAG, "uriToFilePath: $volume + $relative → $path")
-                path
+                    "/storage/emulated/0" else "/storage/$volume"
+                "$base/$relative"
             }
-
-            // Fallback: treat as relative to primary storage
-            else -> {
-                val path = "/storage/emulated/0/$encoded"
-                Log.d(TAG, "uriToFilePath: fallback → $path")
-                path
-            }
+            else -> "/storage/emulated/0/$encoded"
         }
     }
 }

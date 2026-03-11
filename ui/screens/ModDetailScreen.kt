@@ -33,7 +33,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.work.*
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
@@ -563,8 +567,25 @@ private fun DownloadPickerSheet(
         versions.flatMap { it.loaders }.distinct().sorted()
     }
 
-    var selectedMc     by remember { mutableStateOf<String?>(null) }
-    var selectedLoader by remember { mutableStateOf<String?>(null) }
+    // Pre-populate from active instance config if available
+    val instanceConfig = remember { InstanceManager.activeInstanceConfig }
+
+    var selectedMc     by remember {
+        mutableStateOf<String?>(
+            instanceConfig?.mcVersion?.let { mc ->
+                // Only pre-select if this mod actually has a version for that MC version
+                allMcVersions.firstOrNull { it == mc }
+            }
+        )
+    }
+    var selectedLoader by remember {
+        mutableStateOf<String?>(
+            instanceConfig?.loaderSlug?.let { slug ->
+                // Only pre-select if this mod supports that loader
+                allLoaders.firstOrNull { it == slug }
+            }
+        )
+    }
     var pendingDownloadVersion by remember { mutableStateOf<ModVersion?>(null) }
 
     val filteredVersions = remember(versions, selectedMc, selectedLoader) {
@@ -630,6 +651,30 @@ private fun DownloadPickerSheet(
                 style      = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
+
+            // ── Instance pre-filter hint ──────────────────────────────────
+            if (instanceConfig != null && (selectedMc != null || selectedLoader != null)) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🎮", fontSize = 13.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Pre-filtered for ${instanceConfig.summary}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
