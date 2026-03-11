@@ -320,12 +320,39 @@ private fun ModDetailContent(
         add("Versions")
     }
 
+    // ── Recommended version — best match for active instance ─────────────
+    val instanceConfig   = remember { InstanceManager.activeInstanceConfig }
+    val recommendedVersion = remember(versions, instanceConfig) {
+        if (instanceConfig == null) null else {
+            // Find the latest release that matches both MC version and loader.
+            // Falls back to MC-only match, then to null (no recommendation).
+            val mcAndLoader = versions.filter { v ->
+                v.gameVersions.contains(instanceConfig.mcVersion) &&
+                        v.loaders.any { it.equals(instanceConfig.loaderSlug, ignoreCase = true) }
+            }
+            val mcOnly = versions.filter { v ->
+                v.gameVersions.contains(instanceConfig.mcVersion)
+            }
+            // Prefer release channel, then beta, then alpha
+            fun List<ModVersion>.bestRelease() =
+                firstOrNull { it.versionType == "release" }
+                    ?: firstOrNull { it.versionType == "beta" }
+                    ?: firstOrNull()
+
+            mcAndLoader.bestRelease() ?: mcOnly.bestRelease()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         ModDetailHeader(
-            project         = project,
-            versions        = versions,
-            downloadInfoMap = downloadInfoMap,
-            onDownloadClick = { showDownloadSheet = true }
+            project               = project,
+            versions              = versions,
+            downloadInfoMap       = downloadInfoMap,
+            onDownloadClick       = { showDownloadSheet = true },
+            recommendedVersion    = recommendedVersion,
+            onRecommendedDownload = {
+                if (recommendedVersion != null) onStartDownload(recommendedVersion)
+            }
         )
 
         TabRow(
@@ -388,13 +415,16 @@ private fun ModDetailHeader(
     project: ModProject,
     versions: List<ModVersion>,
     downloadInfoMap: Map<String, VersionDownloadInfo>,
-    onDownloadClick: () -> Unit
+    onDownloadClick: () -> Unit,
+    recommendedVersion: ModVersion? = null,
+    onRecommendedDownload: () -> Unit = {}
 ) {
     val latestVersion = versions.firstOrNull { it.versionType == "release" } ?: versions.firstOrNull()
     val anyDownloading = downloadInfoMap.values.any {
         it.state in listOf(DownloadState.QUEUED, DownloadState.DOWNLOADING)
     }
     val anyDone = downloadInfoMap.values.any { it.state == DownloadState.DONE }
+    val recommendedInfo = recommendedVersion?.let { downloadInfoMap[it.id] }
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -518,6 +548,83 @@ private fun ModDetailHeader(
                                     "${latestVersion.versionNumber}  •  $mcVer",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Recommended download button (instance-aware) ────────────
+            if (recommendedVersion != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val recState    = recommendedInfo?.state ?: DownloadState.IDLE
+                val recProgress = recommendedInfo?.progress ?: 0
+                val instanceConfig = InstanceManager.activeInstanceConfig
+
+                OutlinedButton(
+                    onClick        = onRecommendedDownload,
+                    modifier       = Modifier.fillMaxWidth(),
+                    shape          = RoundedCornerShape(10.dp),
+                    colors         = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    contentPadding = PaddingValues(vertical = 12.dp),
+                    border         = androidx.compose.foundation.BorderStroke(
+                        1.dp, MaterialTheme.colorScheme.primary.copy(
+                            alpha = if (recState == DownloadState.DONE) 0.4f else 1f
+                        )
+                    )
+                ) {
+                    when (recState) {
+                        DownloadState.QUEUED -> {
+                            CircularProgressIndicator(
+                                modifier    = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color       = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Queued…", fontWeight = FontWeight.SemiBold)
+                        }
+                        DownloadState.DOWNLOADING -> {
+                            CircularProgressIndicator(
+                                progress    = { recProgress / 100f },
+                                modifier    = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color       = MaterialTheme.colorScheme.primary,
+                                trackColor  = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("$recProgress%", fontWeight = FontWeight.SemiBold)
+                        }
+                        DownloadState.DONE -> {
+                            Icon(Icons.Default.Check, null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Recommended Downloaded!", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    recommendedVersion.versionNumber,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+                                )
+                            }
+                        }
+                        else -> {
+                            Text("⚡", fontSize = 14.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "Download Recommended",
+                                    fontWeight = FontWeight.SemiBold,
+                                    color      = MaterialTheme.colorScheme.primary
+                                )
+                                // Subtitle: version number + what it's matched to
+                                val mc     = instanceConfig?.mcVersion ?: ""
+                                val loader = instanceConfig?.loader ?: ""
+                                Text(
+                                    "${recommendedVersion.versionNumber}  •  $loader $mc",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
                                 )
                             }
                         }

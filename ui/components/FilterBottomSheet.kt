@@ -8,10 +8,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.viewmodel.BrowseFilters
 
-// Common Minecraft release versions — sorted highest to lowest
-// Updated to match current Modrinth API data (1.21.11 is latest stable as of early 2026)
 val GAME_VERSIONS = listOf(
     "1.21.11", "1.21.10", "1.21.9", "1.21.8", "1.21.7", "1.21.6",
     "1.21.5", "1.21.4", "1.21.3", "1.21.1", "1.21",
@@ -47,10 +46,28 @@ fun FilterBottomSheet(
     onFiltersChanged: (BrowseFilters) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedVersion  by remember { mutableStateOf(currentFilters.gameVersion) }
-    var selectedLoader   by remember { mutableStateOf(currentFilters.loader) }
+    val instanceConfig = remember { InstanceManager.activeInstanceConfig }
+
+    // If current filters have no game version set, pre-fill from instance config
+    val defaultVersion = remember(currentFilters, instanceConfig) {
+        currentFilters.gameVersion
+            ?: instanceConfig?.mcVersion?.takeIf { it in GAME_VERSIONS }
+    }
+    val defaultLoader = remember(currentFilters, instanceConfig) {
+        currentFilters.loader
+            ?: instanceConfig?.loaderSlug?.takeIf { it in LOADERS }
+    }
+
+    var selectedVersion  by remember { mutableStateOf(defaultVersion) }
+    var selectedLoader   by remember { mutableStateOf(defaultLoader) }
     var selectedCategory by remember { mutableStateOf(currentFilters.category) }
     var selectedSort     by remember { mutableStateOf(currentFilters.sortIndex) }
+
+    // Whether current selections match the instance config (for hint display)
+    val isInstanceVersion = instanceConfig != null &&
+            selectedVersion == instanceConfig.mcVersion
+    val isInstanceLoader  = instanceConfig != null &&
+            selectedLoader == instanceConfig.loaderSlug
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -60,19 +77,39 @@ fun FilterBottomSheet(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp)
         ) {
-            Text(
-                "Filter & Sort",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Filter & Sort",
+                    style      = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                // Instance hint badge in header
+                if (instanceConfig != null) {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    ) {
+                        Text(
+                            "🎮 ${instanceConfig.mcVersion}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style    = MaterialTheme.typography.labelSmall,
+                            color    = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Sort
+            // ── Sort ─────────────────────────────────────────────────────
             FilterSection(title = "Sort By") {
                 FilterChipGroup(
-                    options  = SORT_OPTIONS.map { it.second },
-                    selected = SORT_OPTIONS.find { it.first == selectedSort }?.second,
+                    options    = SORT_OPTIONS.map { it.second },
+                    selected   = SORT_OPTIONS.find { it.first == selectedSort }?.second,
                     onSelected = { label ->
                         selectedSort = SORT_OPTIONS.find { it.second == label }?.first ?: "relevance"
                     }
@@ -81,8 +118,11 @@ fun FilterBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Game version — already sorted highest→lowest in GAME_VERSIONS
-            FilterSection(title = "Game Version") {
+            // ── Game version ──────────────────────────────────────────────
+            FilterSection(
+                title = "Game Version",
+                hint  = if (isInstanceVersion) "🎮 From your instance" else null
+            ) {
                 FilterChipGroup(
                     options    = GAME_VERSIONS,
                     selected   = selectedVersion,
@@ -92,8 +132,11 @@ fun FilterBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Loader
-            FilterSection(title = "Loader") {
+            // ── Loader ────────────────────────────────────────────────────
+            FilterSection(
+                title = "Loader",
+                hint  = if (isInstanceLoader) "🎮 From your instance" else null
+            ) {
                 FilterChipGroup(
                     options    = LOADERS,
                     selected   = selectedLoader,
@@ -103,7 +146,7 @@ fun FilterBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Category
+            // ── Category ──────────────────────────────────────────────────
             FilterSection(title = "Category") {
                 FilterChipGroup(
                     options    = CATEGORIES,
@@ -116,10 +159,10 @@ fun FilterBottomSheet(
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier              = Modifier.fillMaxWidth()
             ) {
                 OutlinedButton(
-                    onClick = {
+                    onClick  = {
                         selectedVersion  = null
                         selectedLoader   = null
                         selectedCategory = null
@@ -131,7 +174,7 @@ fun FilterBottomSheet(
                 ) { Text("Reset") }
 
                 Button(
-                    onClick = {
+                    onClick  = {
                         onFiltersChanged(BrowseFilters(
                             gameVersion = selectedVersion,
                             loader      = selectedLoader,
@@ -147,14 +190,29 @@ fun FilterBottomSheet(
     }
 }
 
+// ─── Section header with optional hint ───────────────────────────────────────
+
 @Composable
-fun FilterSection(title: String, content: @Composable () -> Unit) {
-    Text(
-        text  = title,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-    )
+fun FilterSection(title: String, hint: String? = null, content: @Composable () -> Unit) {
+    Row(
+        modifier          = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+    ) {
+        Text(
+            text       = title,
+            style      = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+        )
+        if (hint != null) {
+            Text(
+                text  = hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+            )
+        }
+    }
     Spacer(modifier = Modifier.height(8.dp))
     content()
 }
