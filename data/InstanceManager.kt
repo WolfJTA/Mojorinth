@@ -20,7 +20,8 @@ import java.io.File
  */
 data class InstanceEntry(
     val folderName: String,   // actual subfolder name used for SAF navigation
-    val displayName: String   // "name" field from mojo_instance.json, or folderName fallback
+    val displayName: String,  // "name" field from mojo_instance.json, or folderName fallback
+    val summary: String = ""  // e.g. "Fabric 0.16.14 • MC 1.21.4"
 )
 
 object InstanceManager {
@@ -245,17 +246,22 @@ object InstanceManager {
                 .filter { it.isDirectory }
                 .mapNotNull { dir ->
                     val folderName = dir.name ?: return@mapNotNull null
-                    val displayName = try {
+                    var displayName = folderName
+                    var summary     = ""
+                    try {
                         val configFile = dir.findFile(INSTANCE_CONFIG_FILENAME)
                         if (configFile != null) {
                             val json = context.contentResolver
                                 .openInputStream(configFile.uri)
                                 ?.bufferedReader()?.use { it.readText() }
                             val parsed = json?.let { MojoInstance.parse(it) }
-                            parsed?.name?.takeIf { it.isNotBlank() } ?: folderName
-                        } else folderName
-                    } catch (e: Exception) { folderName }
-                    InstanceEntry(folderName = folderName, displayName = displayName)
+                            if (parsed != null) {
+                                displayName = parsed.name.takeIf { it.isNotBlank() } ?: folderName
+                                summary     = parsed.summary
+                            }
+                        }
+                    } catch (e: Exception) { /* keep defaults */ }
+                    InstanceEntry(folderName = folderName, displayName = displayName, summary = summary)
                 }
                 .sortedBy { it.displayName.lowercase() }
         } catch (e: Exception) {

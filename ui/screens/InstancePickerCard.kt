@@ -568,7 +568,7 @@ fun InstancePickerCard() {
                                                 Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
                                                 Spacer(Modifier.width(10.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
-                                                    // Display name — from mojo_instance.json
+                                                    // Display name from mojo_instance.json
                                                     Text(
                                                         entry.displayName,
                                                         style      = MaterialTheme.typography.bodySmall,
@@ -576,19 +576,21 @@ fun InstancePickerCard() {
                                                         color      = if (isActive) green
                                                         else MaterialTheme.colorScheme.onSurface
                                                     )
-                                                    // Folder name shown as subtitle if different
-                                                    if (entry.folderName != entry.displayName) {
+                                                    // Version summary on every row
+                                                    if (entry.summary.isNotEmpty()) {
                                                         Text(
-                                                            "📁 ${entry.folderName}",
+                                                            entry.summary,
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                            color = if (isActive) green.copy(alpha = 0.75f)
+                                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                                         )
                                                     }
-                                                    if (isActive && instanceConfig != null) {
+                                                    // Folder name as tertiary hint if different from display name
+                                                    if (entry.folderName != entry.displayName) {
                                                         Text(
-                                                            instanceConfig!!.summary,
+                                                            entry.folderName,
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            color = green.copy(alpha = 0.75f)
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                                                         )
                                                     }
                                                 }
