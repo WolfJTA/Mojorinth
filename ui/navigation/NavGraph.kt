@@ -12,17 +12,18 @@ import com.example.modrinthforandroid.ui.screens.*
 @Composable
 fun ModrinthNavGraph(
     navController: NavHostController = rememberNavController(),
-    onThemeChange: (String) -> Unit = {}          // ← received from MainActivity
+    onThemeChange: (String) -> Unit = {}
 ) {
     NavHost(navController = navController, startDestination = Screen.Home.route) {
 
         composable(Screen.Home.route) {
             HomeScreen(
-                onModClick       = { navController.navigate(Screen.ModDetail.createRoute(it)) },
-                onSearchClick    = { navController.navigate(Screen.ProjectTypePicker.route) },
-                onDownloadsClick = { navController.navigate(Screen.Downloads.route) },
-                onSettingsClick  = { navController.navigate(Screen.Settings.route) },
-                onBrowseType     = { navController.navigate(Screen.Browse.createRoute(it)) }
+                onModClick          = { navController.navigate(Screen.ModDetail.createRoute(it)) },
+                onSearchClick       = { navController.navigate(Screen.ProjectTypePicker.route) },
+                onDownloadsClick    = { navController.navigate(Screen.Downloads.route) },
+                onSettingsClick     = { navController.navigate(Screen.Settings.route) },
+                onBrowseType        = { navController.navigate(Screen.Browse.createRoute(it)) },
+                onManageInstance    = { navController.navigate(Screen.InstanceManager.route) }  // ← NEW
             )
         }
 
@@ -60,8 +61,13 @@ fun ModrinthNavGraph(
         composable(Screen.Settings.route) {
             SettingsScreen(
                 onBack        = { navController.popBackStack() },
-                onThemeChange = onThemeChange        // ← forwarded from MainActivity
+                onThemeChange = onThemeChange
             )
+        }
+
+        // ── Instance Manager ──────────────────────────────────────────────
+        composable(Screen.InstanceManager.route) {
+            InstanceManagerScreen(onBack = { navController.popBackStack() })
         }
     }
 }

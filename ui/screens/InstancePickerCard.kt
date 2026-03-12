@@ -39,7 +39,9 @@ import com.example.modrinthforandroid.data.InstanceManager
 private enum class FolderState { UNSET, WRONG, LOCKED }
 
 @Composable
-fun InstancePickerCard() {
+fun InstancePickerCard(
+    onInstanceChanged: () -> Unit = {}   // ← NEW: called whenever active instance changes
+) {
     val context      = LocalContext.current
     val focusManager = LocalFocusManager.current
 
@@ -84,7 +86,7 @@ fun InstancePickerCard() {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
 
-            // ── Header ────────────────────────────────────────────────────
+            // ── Header ───────────────────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -261,48 +263,34 @@ fun InstancePickerCard() {
                                 lineHeight = 18.sp
                             )
                             Spacer(Modifier.height(10.dp))
-
-                            // Indented folder tree so the path is impossible to misread
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.background
                             ) {
                                 Column(modifier = Modifier.padding(10.dp)) {
-                                    data class PathNode(val name: String, val depth: Int, val isTarget: Boolean = false)
                                     listOf(
-                                        PathNode("Android",            0),
-                                        PathNode("data",               1),
-                                        PathNode("git.artdeell.mojo",  2),
-                                        PathNode("files",              3),
-                                        PathNode("instances",          4, isTarget = true)
-                                    ).forEachIndexed { i, node ->
-                                        Row(
-                                            modifier          = Modifier.padding(vertical = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Spacer(Modifier.width((node.depth * 14).dp))
+                                        0 to "MojoLauncher",
+                                        1 to "files",
+                                        2 to "instances  ← select this"
+                                    ).forEach { (indent, label) ->
+                                        Row(modifier = Modifier.padding(start = (indent * 14).dp, top = 2.dp)) {
+                                            if (indent > 0) Text("└ ", color = green.copy(alpha = 0.5f),
+                                                style = MaterialTheme.typography.labelSmall)
                                             Text(
-                                                if (node.depth == 0) "📂 " else "└ 📂 ",
-                                                fontSize = 11.sp,
-                                                color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                            )
-                                            Text(
-                                                text      = if (node.isTarget) "${node.name}  ← select this"
-                                                else node.name,
-                                                style     = MaterialTheme.typography.labelSmall,
-                                                fontWeight = if (node.isTarget) FontWeight.Bold else FontWeight.Normal,
-                                                color     = if (node.isTarget) green
-                                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                                                label,
+                                                style      = MaterialTheme.typography.labelSmall,
+                                                fontWeight = if (indent == 2) FontWeight.Bold else FontWeight.Normal,
+                                                color      = if (indent == 2) green
+                                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                             )
                                         }
                                     }
                                 }
                             }
-
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(Modifier.height(8.dp))
                             Text(
-                                "Tip: tap the ☰ hamburger menu (top-left) in the picker, " +
-                                        "select MojoLauncher, then tap instances.",
+                                "Tap the ☰ hamburger, choose MojoLauncher → instances, " +
+                                        "then tap \"Use this folder\".",
                                 style      = MaterialTheme.typography.labelSmall,
                                 color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                                 lineHeight = 16.sp
@@ -356,6 +344,7 @@ fun InstancePickerCard() {
                                         InstanceManager.clearActiveInstance(context)
                                         activeName     = null
                                         instanceConfig = null
+                                        onInstanceChanged()   // ← notify HomeScreen
                                     },
                                     modifier = Modifier.size(28.dp)
                                 ) {
@@ -412,214 +401,141 @@ fun InstancePickerCard() {
                             // mojo_instance.json unreadable warning
                             if (activeName != null && instanceConfig == null) {
                                 Row(
-                                    modifier = Modifier
-                                        .padding(top = 8.dp)
+                                    modifier          = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        .padding(top = 8.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("⚠️", fontSize = 14.sp)
-                                    Spacer(Modifier.width(8.dp))
+                                    Icon(Icons.Default.Warning, null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                                    Spacer(Modifier.width(6.dp))
                                     Text(
-                                        "Could not read mojo_instance.json",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        "mojo_instance.json not found — create one in MojoLauncher first.",
+                                        style      = MaterialTheme.typography.labelSmall,
+                                        color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                                        lineHeight = 16.sp
                                     )
                                 }
                             }
-
-                            Spacer(Modifier.height(10.dp))
                         }
                     }
 
-                    // Locked path row — padlock icon, NO change button
-                    Row(
-                        modifier          = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Lock,
-                            contentDescription = "Folder locked",
-                            modifier = Modifier.size(13.dp),
-                            tint     = green.copy(alpha = 0.65f)
-                        )
-                        Spacer(Modifier.width(5.dp))
-                        Text(
-                            text = rootDisplay
-                                ?.split("/")?.takeLast(4)?.joinToString("/")
-                                ?: "git.artdeell.mojo/files/instances",
-                            style    = MaterialTheme.typography.labelSmall,
-                            color    = green.copy(alpha = 0.65f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = green.copy(alpha = 0.12f)
-                        ) {
-                            Text(
-                                "✓ Linked",
-                                modifier   = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                style      = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color      = green
-                            )
-                        }
+                    Spacer(Modifier.height(12.dp))
+
+                    // Instance search bar
+                    val filtered = if (instanceSearch.isBlank()) instances
+                    else instances.filter {
+                        it.displayName.contains(instanceSearch, ignoreCase = true) ||
+                                it.folderName.contains(instanceSearch, ignoreCase = true)
                     }
 
-                    // ── Instance search + list ────────────────────────────
-                    if (instances.isNotEmpty()) {
-                        Column(modifier = Modifier.padding(top = 12.dp)) {
-
-                            // Search bar — filters by display name (from mojo_instance.json)
-                            OutlinedTextField(
-                                value         = instanceSearch,
-                                onValueChange = { instanceSearch = it },
-                                modifier      = Modifier.fillMaxWidth(),
-                                placeholder   = { Text(
-                                    "Search instances…",
-                                    style = MaterialTheme.typography.bodySmall
-                                )},
-                                leadingIcon   = {
-                                    Icon(Icons.Default.Search, null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                },
-                                trailingIcon  = if (instanceSearch.isNotEmpty()) {{
-                                    IconButton(onClick = { instanceSearch = "" },
-                                        modifier = Modifier.size(18.dp)) {
-                                        Icon(Icons.Default.Close, "Clear search",
-                                            modifier = Modifier.size(14.dp))
-                                    }
-                                }} else null,
-                                singleLine    = true,
-                                shape         = RoundedCornerShape(10.dp),
-                                colors        = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor   = green,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
-                                ),
-                                textStyle = MaterialTheme.typography.bodySmall
-                            )
-
-                            Spacer(Modifier.height(8.dp))
-
-                            val filtered = if (instanceSearch.isBlank()) instances
-                            else instances.filter {
-                                it.displayName.contains(instanceSearch, ignoreCase = true) ||
-                                        it.folderName.contains(instanceSearch, ignoreCase = true)
+                    OutlinedTextField(
+                        value         = instanceSearch,
+                        onValueChange = { instanceSearch = it },
+                        placeholder   = { Text("Search instances…",
+                            style = MaterialTheme.typography.labelMedium) },
+                        leadingIcon   = {
+                            Icon(Icons.Default.Search, null,
+                                modifier = Modifier.size(16.dp),
+                                tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                        },
+                        trailingIcon  = if (instanceSearch.isNotEmpty()) ({
+                            IconButton(onClick = { instanceSearch = "" }) {
+                                Icon(Icons.Default.Close, null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
                             }
+                        }) else null,
+                        singleLine    = true,
+                        shape         = RoundedCornerShape(10.dp),
+                        textStyle     = MaterialTheme.typography.labelMedium,
+                        colors        = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor   = green.copy(alpha = 0.5f),
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                        ),
+                        modifier      = Modifier.fillMaxWidth()
+                    )
 
-                            Text(
-                                if (instanceSearch.isBlank())
-                                    "${instances.size} instance${if (instances.size != 1) "s" else ""} found:"
-                                else
-                                    "${filtered.size} of ${instances.size} match:",
-                                style    = MaterialTheme.typography.labelSmall,
-                                color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                modifier = Modifier.padding(bottom = 6.dp)
-                            )
+                    Spacer(Modifier.height(8.dp))
 
-                            Surface(
-                                shape    = RoundedCornerShape(10.dp),
-                                color    = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
-                                modifier = Modifier
+                    // Instance list
+                    Surface(
+                        shape    = RoundedCornerShape(10.dp),
+                        color    = MaterialTheme.colorScheme.background.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                    ) {
+                        if (filtered.isEmpty()) {
+                            Box(
+                                modifier         = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 240.dp)
+                                    .padding(20.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                if (filtered.isEmpty()) {
-                                    Box(
+                                Text(
+                                    "No instances match: $instanceSearch",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                )
+                            }
+                        } else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                                items(filtered, key = { it.folderName }) { entry ->
+                                    val isActive = entry.folderName == activeName
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(20.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            "No instances match: $instanceSearch",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                        )
-                                    }
-                                } else {
-                                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                                        items(filtered, key = { it.folderName }) { entry ->
-                                            val isActive = entry.folderName == activeName
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(
-                                                        if (isActive) green.copy(alpha = 0.08f)
-                                                        else Color.Transparent
-                                                    )
-                                                    .clickable {
-                                                        InstanceManager.setActiveInstance(context, entry.folderName)
-                                                        activeName     = InstanceManager.activeInstanceName
-                                                        instanceConfig = InstanceManager.activeInstanceConfig
-                                                        instanceSearch = ""
-                                                        focusManager.clearFocus()
-                                                    }
-                                                    .padding(horizontal = 12.dp, vertical = 11.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
-                                                Spacer(Modifier.width(10.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    // Display name from mojo_instance.json
-                                                    Text(
-                                                        entry.displayName,
-                                                        style      = MaterialTheme.typography.bodySmall,
-                                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                                        color      = if (isActive) green
-                                                        else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    // Version summary on every row
-                                                    if (entry.summary.isNotEmpty()) {
-                                                        Text(
-                                                            entry.summary,
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = if (isActive) green.copy(alpha = 0.75f)
-                                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                                        )
-                                                    }
-                                                    // Folder name as tertiary hint if different from display name
-                                                    if (entry.folderName != entry.displayName) {
-                                                        Text(
-                                                            entry.folderName,
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                                                        )
-                                                    }
-                                                }
-                                                if (isActive) {
-                                                    Icon(
-                                                        Icons.Default.Check, null,
-                                                        modifier = Modifier.size(14.dp),
-                                                        tint     = green
-                                                    )
-                                                }
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isActive) green.copy(alpha = 0.08f)
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                InstanceManager.setActiveInstance(context, entry.folderName)
+                                                activeName     = InstanceManager.activeInstanceName
+                                                instanceConfig = InstanceManager.activeInstanceConfig
+                                                instanceSearch = ""
+                                                focusManager.clearFocus()
+                                                onInstanceChanged()   // ← notify HomeScreen
                                             }
-                                            if (entry != filtered.last()) {
-                                                HorizontalDivider(
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(if (isActive) "🎮" else "📁", fontSize = 14.sp)
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                entry.displayName,
+                                                style      = MaterialTheme.typography.bodySmall,
+                                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                                color      = if (isActive) green
+                                                else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (entry.summary.isNotEmpty()) {
+                                                Text(
+                                                    entry.summary,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (isActive) green.copy(alpha = 0.75f)
+                                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                                 )
                                             }
+                                        }
+                                        if (isActive) {
+                                            Icon(
+                                                Icons.Default.Check, null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint     = green
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
-                    } else {
-                        Text(
-                            modifier   = Modifier.padding(top = 10.dp),
-                            text       = "No instances found. Create one in MojoLauncher first.",
-                            style      = MaterialTheme.typography.labelSmall,
-                            color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                            lineHeight = 16.sp
-                        )
                     }
                 }
             }

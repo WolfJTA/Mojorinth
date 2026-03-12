@@ -1,11 +1,7 @@
 package com.example.modrinthforandroid.ui.screens
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -21,12 +17,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.InstanceManager
@@ -43,9 +40,24 @@ fun HomeScreen(
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onBrowseType: (String) -> Unit = {},
+    onManageInstance: () -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Re-check activeInstanceName every time this screen resumes so the
+    // MANAGE button appears/disappears without needing a full relaunch.
+    var activeInstance by remember { mutableStateOf(InstanceManager.activeInstanceName) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                activeInstance = InstanceManager.activeInstanceName
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         topBar = {
@@ -59,16 +71,31 @@ fun HomeScreen(
                                 .background(MaterialTheme.colorScheme.primary),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("M", fontWeight = FontWeight.Black,
+                            Text(
+                                "M", fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.onPrimary,
-                                fontSize = 16.sp)
+                                fontSize = 16.sp
+                            )
                         }
                         Spacer(Modifier.width(8.dp))
-                        Text("Mojorinth", fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp)
+                        Text(
+                            "Mojorinth", fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp
+                        )
                     }
                 },
                 actions = {
+                    // MANAGE INSTANCE — shown whenever an instance is active
+                    if (activeInstance != null) {
+                        TextButton(onClick = onManageInstance) {
+                            Text(
+                                "MANAGE",
+                                style      = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color      = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     IconButton(onClick = onSearchClick) {
                         Icon(Icons.Default.Search, "Browse",
                             tint = MaterialTheme.colorScheme.onBackground)
@@ -98,19 +125,23 @@ fun HomeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("😕 ${uiState.error}",
+                    Text(
+                        "😕 ${uiState.error}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    )
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = { viewModel.refresh() }) { Text("Retry") }
                 }
             }
 
             else -> HomeContent(
-                uiState      = uiState,
-                onModClick   = onModClick,
-                onBrowseType = onBrowseType,
-                innerPadding = innerPadding
+                uiState          = uiState,
+                onModClick       = onModClick,
+                onBrowseType     = onBrowseType,
+                onManageInstance = onManageInstance,
+                onInstancePicked = { activeInstance = InstanceManager.activeInstanceName },
+                innerPadding     = innerPadding
             )
         }
     }
@@ -123,6 +154,8 @@ private fun HomeContent(
     uiState: HomeUiState,
     onModClick: (String) -> Unit,
     onBrowseType: (String) -> Unit,
+    onManageInstance: () -> Unit,
+    onInstancePicked: () -> Unit,
     innerPadding: PaddingValues
 ) {
     LazyColumn(
@@ -131,7 +164,9 @@ private fun HomeContent(
             bottom = innerPadding.calculateBottomPadding() + 16.dp
         )
     ) {
-        item { InstancePickerCard() }
+        // Pass a callback so HomeScreen knows when the user picks an instance
+        // and can immediately show the MANAGE button without waiting for ON_RESUME.
+        item { InstancePickerCard(onInstanceChanged = onInstancePicked) }
 
         item {
             Spacer(Modifier.height(20.dp))
@@ -182,6 +217,7 @@ private fun HomeContent(
         }
     }
 }
+
 // ─── Instance badge chip ──────────────────────────────────────────────────────
 
 @Composable
@@ -206,8 +242,8 @@ private fun InstanceBadge(
             Column {
                 Text(
                     label,
-                    style  = MaterialTheme.typography.labelSmall,
-                    color  = color.copy(alpha = 0.75f),
+                    style    = MaterialTheme.typography.labelSmall,
+                    color    = color.copy(alpha = 0.75f),
                     fontSize = 9.sp
                 )
                 Text(
@@ -232,8 +268,8 @@ private fun SectionHeader(
     onSeeAll: (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        modifier              = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(Modifier.weight(1f)) {
@@ -288,13 +324,15 @@ private fun BrowseGrid(onBrowseType: (String) -> Unit) {
                 ) {
                     Text(item.emoji, fontSize = 24.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text(item.label,
+                    Text(
+                        item.label,
                         style      = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color      = item.tint,
                         maxLines   = 2,
                         overflow   = TextOverflow.Ellipsis,
-                        lineHeight = 13.sp)
+                        lineHeight = 13.sp
+                    )
                 }
             }
         }
@@ -327,27 +365,33 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                         contentScale       = ContentScale.Crop
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text(mod.title,
+                    Text(
+                        mod.title,
                         style      = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines   = 2,
                         overflow   = TextOverflow.Ellipsis,
                         color      = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 16.sp)
+                        lineHeight = 16.sp
+                    )
                     Spacer(Modifier.height(4.dp))
-                    Text("⬇ ${formatNumber(mod.downloads)}",
+                    Text(
+                        "⬇ ${formatNumber(mod.downloads)}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary)
+                        color = MaterialTheme.colorScheme.primary
+                    )
                     mod.categories.firstOrNull()?.let { cat ->
                         Spacer(Modifier.height(4.dp))
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                         ) {
-                            Text(cat,
+                            Text(
+                                cat,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                                 style    = MaterialTheme.typography.labelSmall,
-                                color    = MaterialTheme.colorScheme.primary)
+                                color    = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }
