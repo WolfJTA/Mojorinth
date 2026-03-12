@@ -1,7 +1,5 @@
 package com.example.modrinthforandroid.ui.screens
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,16 +24,20 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.HomeUiState
 import com.example.modrinthforandroid.viewmodel.HomeViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,10 +46,13 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onManageClick: () -> Unit = {},          // ← NEW
     onBrowseType: (String) -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val hasActiveInstance = InstanceManager.activeInstanceName != null
 
     Scaffold(
         topBar = {
@@ -59,31 +66,65 @@ fun HomeScreen(
                                 .background(MaterialTheme.colorScheme.primary),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("M", fontWeight = FontWeight.Black,
+                            Text(
+                                "M", fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.onPrimary,
-                                fontSize = 16.sp)
+                                fontSize = 16.sp
+                            )
                         }
                         Spacer(Modifier.width(8.dp))
-                        Text("Mojorinth", fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp)
+                        Text(
+                            "Mojorinth", fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp
+                        )
                     }
                 },
                 actions = {
+                    // ── Manage instance button ─────────────────────────────
+                    // Badge glows when an instance is active so users know it's functional
+                    BadgedBox(
+                        badge = {
+                            if (hasActiveInstance) {
+                                Badge(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ) { }
+                            }
+                        }
+                    ) {
+                        IconButton(onClick = onManageClick) {
+                            Icon(
+                                Icons.Default.List,
+                                contentDescription = "Manage Instance",
+                                tint = if (hasActiveInstance)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+
                     IconButton(onClick = onSearchClick) {
-                        Icon(Icons.Default.Search, "Browse",
-                            tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(
+                            Icons.Default.Search, "Browse",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                     IconButton(onClick = onDownloadsClick) {
-                        Icon(Icons.Default.Build, "Downloads",
-                            tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(
+                            Icons.Default.Build, "Downloads",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                     IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, "Settings",
-                            tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(
+                            Icons.Default.Settings, "Settings",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background)
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { innerPadding ->
@@ -98,9 +139,11 @@ fun HomeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("😕 ${uiState.error}",
+                    Text(
+                        "😕 ${uiState.error}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    )
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = { viewModel.refresh() }) { Text("Retry") }
                 }
@@ -182,46 +225,6 @@ private fun HomeContent(
         }
     }
 }
-// ─── Instance badge chip ──────────────────────────────────────────────────────
-
-@Composable
-private fun InstanceBadge(
-    icon: String,
-    label: String,
-    value: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape    = RoundedCornerShape(8.dp),
-        color    = color.copy(alpha = 0.10f),
-        modifier = modifier
-    ) {
-        Row(
-            modifier          = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(icon, fontSize = 13.sp)
-            Spacer(Modifier.width(6.dp))
-            Column {
-                Text(
-                    label,
-                    style  = MaterialTheme.typography.labelSmall,
-                    color  = color.copy(alpha = 0.75f),
-                    fontSize = 9.sp
-                )
-                Text(
-                    value,
-                    style      = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color      = color,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
@@ -260,15 +263,15 @@ private data class BrowseItem(val label: String, val emoji: String, val type: St
 private fun BrowseGrid(onBrowseType: (String) -> Unit) {
     val green = MaterialTheme.colorScheme.primary
     val items = listOf(
-        BrowseItem("Mods",           "⚙️", "mod",          green),
-        BrowseItem("Modpacks",       "📦", "modpack",      Color(0xFF42A5F5)),
-        BrowseItem("Shaders",        "✨", "shader",       Color(0xFFFFA726)),
+        BrowseItem("Mods",          "⚙️",  "mod",          green),
+        BrowseItem("Modpacks",      "📦",  "modpack",      Color(0xFF42A5F5)),
+        BrowseItem("Shaders",       "✨",  "shader",       Color(0xFFFFA726)),
         BrowseItem("Resource\nPacks","🎨", "resourcepack", Color(0xFFAB47BC)),
-        BrowseItem("Data\nPacks",    "📋", "datapack",     Color(0xFF26A69A)),
-        BrowseItem("Plugins",        "🔌", "plugin",       Color(0xFFEF5350))
+        BrowseItem("Data\nPacks",   "📋",  "datapack",     Color(0xFF26A69A)),
+        BrowseItem("Plugins",       "🔌",  "plugin",       Color(0xFFEF5350))
     )
     LazyRow(
-        contentPadding        = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(items) { item ->
@@ -277,12 +280,11 @@ private fun BrowseGrid(onBrowseType: (String) -> Unit) {
                 shape    = RoundedCornerShape(14.dp),
                 color    = item.tint.copy(alpha = 0.1f),
                 modifier = Modifier
-                    .width(88.dp)
-                    .height(80.dp)
+                    .width(88.dp).height(80.dp)
                     .border(1.dp, item.tint.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
             ) {
                 Column(
-                    modifier            = Modifier.fillMaxSize().padding(8.dp),
+                    modifier = Modifier.fillMaxSize().padding(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -306,7 +308,7 @@ private fun BrowseGrid(onBrowseType: (String) -> Unit) {
 @Composable
 private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
     LazyRow(
-        contentPadding        = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(mods, key = { it.projectId }) { mod ->
@@ -321,9 +323,7 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                     AsyncImage(
                         model              = mod.iconUrl,
                         contentDescription = "${mod.title} icon",
-                        modifier           = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(10.dp)),
+                        modifier           = Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)),
                         contentScale       = ContentScale.Crop
                     )
                     Spacer(Modifier.height(8.dp))
@@ -340,10 +340,8 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                         color = MaterialTheme.colorScheme.primary)
                     mod.categories.firstOrNull()?.let { cat ->
                         Spacer(Modifier.height(4.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        ) {
+                        Surface(shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)) {
                             Text(cat,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                                 style    = MaterialTheme.typography.labelSmall,
@@ -351,6 +349,147 @@ private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ─── Folder Browser Dialog ────────────────────────────────────────────────────
+
+@Composable
+fun FolderBrowserDialog(
+    startPath: String,
+    onFolderSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var currentDir by remember { mutableStateOf(File(startPath)) }
+    val entries by remember(currentDir) {
+        derivedStateOf {
+            currentDir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.sortedBy { it.name }
+                ?: emptyList()
+        }
+    }
+
+    val breadcrumb = currentDir.absolutePath
+        .removePrefix(startPath)
+        .trim('/')
+        .let { if (it.isEmpty()) "instances" else "instances/$it" }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.75f)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Browse Instance Folders",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text("📂 $breadcrumb",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                Spacer(Modifier.height(8.dp))
+
+                if (currentDir.absolutePath != startPath) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { currentDir = currentDir.parentFile ?: currentDir }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.ArrowBack, "Go up",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(".. (go up)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                }
+
+                if (entries.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(
+                            if (!currentDir.exists()) "Path not found — check Settings"
+                            else "No subfolders here",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(entries, key = { it.absolutePath }) { folder ->
+                            val isInstanceRoot = currentDir.absolutePath == startPath
+                            val looksLikeInstance = File(folder, "mods").exists()
+                                    || File(folder, "shaderpacks").exists()
+                                    || File(folder, "resourcepacks").exists()
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (isInstanceRoot) onFolderSelected(folder.name)
+                                        else currentDir = folder
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Text(if (isInstanceRoot && looksLikeInstance) "🎮" else "📁", fontSize = 18.sp)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text(folder.name,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis)
+                                        if (isInstanceRoot && looksLikeInstance)
+                                            Text("Minecraft instance",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))
+                                    }
+                                }
+                                if (isInstanceRoot) {
+                                    TextButton(
+                                        onClick = { onFolderSelected(folder.name) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Select",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Icon(Icons.Default.KeyboardArrowRight, "Open",
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
             }
         }
     }

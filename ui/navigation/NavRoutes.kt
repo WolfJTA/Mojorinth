@@ -11,4 +11,5 @@ sealed class Screen(val route: String) {
     }
     object Downloads : Screen("downloads")
     object Settings : Screen("settings")
+    object InstanceManager : Screen("instance_manager")   // ← NEW
 }

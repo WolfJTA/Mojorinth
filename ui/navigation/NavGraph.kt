@@ -12,7 +12,7 @@ import com.example.modrinthforandroid.ui.screens.*
 @Composable
 fun ModrinthNavGraph(
     navController: NavHostController = rememberNavController(),
-    onThemeChange: (String) -> Unit = {}          // ← received from MainActivity
+    onThemeChange: (String) -> Unit = {}
 ) {
     NavHost(navController = navController, startDestination = Screen.Home.route) {
 
@@ -22,6 +22,7 @@ fun ModrinthNavGraph(
                 onSearchClick    = { navController.navigate(Screen.ProjectTypePicker.route) },
                 onDownloadsClick = { navController.navigate(Screen.Downloads.route) },
                 onSettingsClick  = { navController.navigate(Screen.Settings.route) },
+                onManageClick    = { navController.navigate(Screen.InstanceManager.route) }, // ← NEW
                 onBrowseType     = { navController.navigate(Screen.Browse.createRoute(it)) }
             )
         }
@@ -60,8 +61,13 @@ fun ModrinthNavGraph(
         composable(Screen.Settings.route) {
             SettingsScreen(
                 onBack        = { navController.popBackStack() },
-                onThemeChange = onThemeChange        // ← forwarded from MainActivity
+                onThemeChange = onThemeChange
             )
+        }
+
+        // ── Instance Manager ──────────────────────────────────────────────
+        composable(Screen.InstanceManager.route) {
+            InstanceManagerScreen(onBack = { navController.popBackStack() })
         }
     }
 }
