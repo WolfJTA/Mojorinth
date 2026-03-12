@@ -18,38 +18,34 @@ private const val TAG = "InstanceManagerVM"
 // ─── Model ────────────────────────────────────────────────────────────────────
 
 /**
- * Represents a single file entry inside an instance subfolder (mods/,
- * shaderpacks/, or resourcepacks/).
+ * Represents a single file inside an instance subfolder.
  *
  * [isDisabled] is true when the filename ends with ".disabled" — the standard
- * MojLauncher / MultiMC convention for temporarily disabling a mod without
- * deleting it.
+ * mod-manager convention for temporarily disabling a mod without deleting it.
+ *
+ * We store the parent folder's URI separately so rename/delete can re-resolve
+ * the file through the SAF tree rather than via fromSingleUri (which can't
+ * rename child-document URIs obtained from listFiles()).
  */
 data class InstanceFileEntry(
+    /** URI of the file itself (child doc URI from listFiles). Used for display only. */
     val uri: Uri,
-    /** Full filename as stored on disk, e.g. "sodium-0.6.0.jar" */
+    /** URI of the parent DocumentFile directory, for re-resolving the file by name. */
+    val parentUri: Uri,
     val filename: String,
-    /** Filename without the trailing ".disabled" suffix, for display. */
     val displayName: String,
-    /** True when the file ends with ".disabled" */
     val isDisabled: Boolean,
-    /** Cleaned file extension shown in the chip (never "disabled"). */
     val extension: String
 ) {
     companion object {
-        fun from(doc: DocumentFile): InstanceFileEntry? {
-            val name = doc.name ?: return null
+        fun from(doc: DocumentFile, parentUri: Uri): InstanceFileEntry? {
+            val name       = doc.name ?: return null
             val isDisabled = name.endsWith(".disabled", ignoreCase = true)
-            // Strip the .disabled suffix to get the "real" name
-            val realName = if (isDisabled) name.removeSuffix(".disabled") else name
-            // Extension is the last segment after the final dot in the real name
-            val ext = realName.substringAfterLast('.', missingDelimiterValue = "")
-                .ifBlank { "file" }
-            // Display name is the real name without the extension for concision,
-            // but keeping both parts is cleaner — keep full realName here so
-            // users see "sodium-0.6.0.jar" rather than "sodium-0.6.0"
+            val realName   = if (isDisabled) name.removeSuffix(".disabled") else name
+            val ext        = realName.substringAfterLast('.', missingDelimiterValue = "").ifBlank { "file" }
             return InstanceFileEntry(
                 uri         = doc.uri,
+                parentUri   = parentUri,
                 filename    = name,
                 displayName = realName,
                 isDisabled  = isDisabled,
@@ -63,39 +59,28 @@ data class InstanceFileEntry(
 
 class InstanceManagerViewModel(private val appContext: Context) : ViewModel() {
 
-    private val _allFiles    = MutableStateFlow<List<InstanceFileEntry>>(emptyList())
-    private val _searchQuery = MutableStateFlow("")
-    private val _isLoading   = MutableStateFlow(false)
+    private val _allFiles     = MutableStateFlow<List<InstanceFileEntry>>(emptyList())
+    private val _searchQuery  = MutableStateFlow("")
+    private val _isLoading    = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
 
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
-    val isLoading:   StateFlow<Boolean> = _isLoading.asStateFlow()
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    val searchQuery:  StateFlow<String>              = _searchQuery.asStateFlow()
+    val isLoading:    StateFlow<Boolean>             = _isLoading.asStateFlow()
+    val errorMessage: StateFlow<String?>             = _errorMessage.asStateFlow()
 
-    /** Filtered + sorted file list derived from raw list + search query. */
-    val files: StateFlow<List<InstanceFileEntry>> = combine(
-        _allFiles, _searchQuery
-    ) { all, query ->
+    val files: StateFlow<List<InstanceFileEntry>> = combine(_allFiles, _searchQuery) { all, query ->
         if (query.isBlank()) all
         else all.filter { it.displayName.contains(query, ignoreCase = true) }
-    }.stateIn(
-        scope         = viewModelScope,
-        started       = SharingStarted.WhileSubscribed(5_000),
-        initialValue  = emptyList()
-    )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    // Tracks which subfolder is currently open so refreshes work after mutations
-    private var currentSubfolder: String = "mods"
+    private var currentSubfolder = "mods"
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    fun setSearch(query: String) {
-        _searchQuery.value = query
-    }
+    fun setSearch(query: String) { _searchQuery.value = query }
 
-    /** Load (or reload) the files from [subfolder] inside the active instance. */
     fun loadFiles(subfolder: String) {
-        currentSubfolder = subfolder
+        currentSubfolder  = subfolder
         _errorMessage.value = null
         viewModelScope.launch {
             _isLoading.value = true
@@ -105,60 +90,82 @@ class InstanceManagerViewModel(private val appContext: Context) : ViewModel() {
     }
 
     /**
-     * Toggle a mod's disabled state:
-     * - enabled  (.jar)      → rename to .jar.disabled
-     * - disabled (.disabled) → rename back to original name
+     * Toggle disabled state by renaming via the SAF tree.
      *
-     * Uses SAF rename, which works without MANAGE_EXTERNAL_STORAGE.
+     * The critical fix: instead of DocumentFile.fromSingleUri (which can't
+     * rename child-document URIs), we navigate from the root tree URI down to
+     * the parent directory and call renameTo() on the DocumentFile obtained
+     * from that tree context. This is the only reliable way to rename files
+     * accessed via ACTION_OPEN_DOCUMENT_TREE on Android 11+.
      */
     fun toggleDisabled(entry: InstanceFileEntry) {
         viewModelScope.launch {
             _errorMessage.value = null
+            val newName = if (entry.isDisabled)
+                entry.filename.removeSuffix(".disabled")
+            else
+                "${entry.filename}.disabled"
+
             val success = withContext(Dispatchers.IO) {
                 try {
-                    val doc = DocumentFile.fromSingleUri(appContext, entry.uri)
-                        ?: return@withContext false
-                    val newName = if (entry.isDisabled) {
-                        // Re-enable: drop the .disabled suffix
-                        entry.filename.removeSuffix(".disabled")
-                    } else {
-                        // Disable: append .disabled
-                        "${entry.filename}.disabled"
-                    }
-                    doc.renameTo(newName).also {
-                        Log.d(TAG, "renameTo($newName) → $it")
-                    }
+                    val rootUri      = InstanceManager.rootUri
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: no root URI") }
+                    val instanceName = InstanceManager.activeInstanceName
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: no active instance") }
+
+                    // Navigate root → instance → subfolder via the persistent tree URI
+                    val rootDoc     = DocumentFile.fromTreeUri(appContext, rootUri)
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: fromTreeUri failed") }
+                    val instanceDoc = rootDoc.findFile(instanceName)
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: instance folder not found") }
+                    val subDoc      = instanceDoc.findFile(currentSubfolder)
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: subfolder not found") }
+
+                    // Re-find the file inside the tree — this gives us a tree-backed
+                    // DocumentFile which supports renameTo(), unlike fromSingleUri().
+                    val fileDoc = subDoc.findFile(entry.filename)
+                        ?: return@withContext false.also { Log.e(TAG, "toggleDisabled: file '${entry.filename}' not found in tree") }
+
+                    Log.d(TAG, "Renaming '${entry.filename}' → '$newName' (uri=${fileDoc.uri})")
+                    val result = fileDoc.renameTo(newName)
+                    Log.d(TAG, "renameTo result: $result")
+                    result
                 } catch (e: Exception) {
-                    Log.e(TAG, "toggleDisabled failed for ${entry.filename}", e)
+                    Log.e(TAG, "toggleDisabled exception for '${entry.filename}'", e)
                     false
                 }
             }
+
             if (success) {
-                loadFiles(currentSubfolder) // Refresh list
+                loadFiles(currentSubfolder)
             } else {
-                _errorMessage.value = "Could not rename \"${entry.displayName}\". Try again."
+                _errorMessage.value = "Could not rename \"${entry.displayName}\". Check logs."
             }
         }
     }
 
-    /** Permanently delete [entry] from the instance folder. */
+    /** Delete a file by re-resolving it through the SAF tree. */
     fun deleteFile(entry: InstanceFileEntry) {
         viewModelScope.launch {
             _errorMessage.value = null
             val success = withContext(Dispatchers.IO) {
                 try {
-                    val doc = DocumentFile.fromSingleUri(appContext, entry.uri)
-                        ?: return@withContext false
-                    doc.delete().also {
-                        Log.d(TAG, "delete(${entry.filename}) → $it")
-                    }
+                    val rootUri      = InstanceManager.rootUri      ?: return@withContext false
+                    val instanceName = InstanceManager.activeInstanceName ?: return@withContext false
+
+                    val rootDoc     = DocumentFile.fromTreeUri(appContext, rootUri) ?: return@withContext false
+                    val instanceDoc = rootDoc.findFile(instanceName)               ?: return@withContext false
+                    val subDoc      = instanceDoc.findFile(currentSubfolder)       ?: return@withContext false
+                    val fileDoc     = subDoc.findFile(entry.filename)               ?: return@withContext false
+
+                    Log.d(TAG, "Deleting '${entry.filename}' (uri=${fileDoc.uri})")
+                    fileDoc.delete().also { Log.d(TAG, "delete result: $it") }
                 } catch (e: Exception) {
-                    Log.e(TAG, "deleteFile failed for ${entry.filename}", e)
+                    Log.e(TAG, "deleteFile exception for '${entry.filename}'", e)
                     false
                 }
             }
             if (success) {
-                // Remove locally — faster than a full reload
                 _allFiles.value = _allFiles.value.filter { it.uri != entry.uri }
             } else {
                 _errorMessage.value = "Could not delete \"${entry.displayName}\". Try again."
@@ -170,23 +177,17 @@ class InstanceManagerViewModel(private val appContext: Context) : ViewModel() {
 
     private suspend fun fetchFiles(subfolder: String): List<InstanceFileEntry> =
         withContext(Dispatchers.IO) {
-            val rootUri      = InstanceManager.rootUri      ?: return@withContext emptyList()
+            val rootUri      = InstanceManager.rootUri           ?: return@withContext emptyList()
             val instanceName = InstanceManager.activeInstanceName ?: return@withContext emptyList()
             try {
-                val rootDoc     = DocumentFile.fromTreeUri(appContext, rootUri)
-                    ?: return@withContext emptyList()
-                val instanceDoc = rootDoc.findFile(instanceName)
-                    ?: return@withContext emptyList()
-                val subDoc      = instanceDoc.findFile(subfolder)
-                    ?: return@withContext emptyList() // Subfolder may not exist yet
+                val rootDoc     = DocumentFile.fromTreeUri(appContext, rootUri) ?: return@withContext emptyList()
+                val instanceDoc = rootDoc.findFile(instanceName)                ?: return@withContext emptyList()
+                val subDoc      = instanceDoc.findFile(subfolder)               ?: return@withContext emptyList()
 
                 subDoc.listFiles()
                     .filter { it.isFile }
-                    .mapNotNull { InstanceFileEntry.from(it) }
-                    .sortedWith(
-                        // Disabled files sink to the bottom; within each group sort by name
-                        compareBy({ it.isDisabled }, { it.displayName.lowercase() })
-                    )
+                    .mapNotNull { InstanceFileEntry.from(it, subDoc.uri) }
+                    .sortedWith(compareBy({ it.isDisabled }, { it.displayName.lowercase() }))
             } catch (e: Exception) {
                 Log.e(TAG, "fetchFiles failed for $instanceName/$subfolder", e)
                 _errorMessage.value = "Failed to read $subfolder/ folder."

@@ -45,8 +45,7 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // Re-check activeInstanceName every time this screen resumes so the
-    // MANAGE button appears/disappears without needing a full relaunch.
+    // Track active instance reactively so the MANAGE button state stays fresh
     var activeInstance by remember { mutableStateOf(InstanceManager.activeInstanceName) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -58,6 +57,9 @@ fun HomeScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    // Show this when MANAGE is tapped but no instance is active
+    var showNoInstanceDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -73,28 +75,36 @@ fun HomeScreen(
                         ) {
                             Text(
                                 "M", fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color    = MaterialTheme.colorScheme.onPrimary,
                                 fontSize = 16.sp
                             )
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
                             "Mojorinth", fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp
+                            color    = MaterialTheme.colorScheme.onBackground,
+                            fontSize = 20.sp
                         )
                     }
                 },
                 actions = {
-                    // MANAGE INSTANCE — shown whenever an instance is active
-                    if (activeInstance != null) {
-                        TextButton(onClick = onManageInstance) {
-                            Text(
-                                "MANAGE",
-                                style      = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color      = MaterialTheme.colorScheme.primary
-                            )
+                    // MANAGE INSTANCE — always visible; guards itself with a dialog
+                    TextButton(
+                        onClick = {
+                            if (activeInstance != null) onManageInstance()
+                            else showNoInstanceDialog = true
                         }
+                    ) {
+                        Text(
+                            "MANAGE",
+                            style      = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            // Dim the label when no instance is active so it looks inactive
+                            color      = if (activeInstance != null)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                        )
                     }
                     IconButton(onClick = onSearchClick) {
                         Icon(Icons.Default.Search, "Browse",
@@ -145,6 +155,27 @@ fun HomeScreen(
             )
         }
     }
+
+    // ── No-instance dialog ────────────────────────────────────────────────────
+    if (showNoInstanceDialog) {
+        AlertDialog(
+            onDismissRequest = { showNoInstanceDialog = false },
+            icon             = {
+                Text("📦", fontSize = 32.sp)
+            },
+            title            = { Text("No Instance Selected", fontWeight = FontWeight.Bold) },
+            text             = {
+                Text(
+                    "Select an instance from the card below first, then tap MANAGE to view and edit its mods, shaders, and resource packs.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton    = {
+                Button(onClick = { showNoInstanceDialog = false }) { Text("Got it") }
+            }
+        )
+    }
 }
 
 // ─── Main content ─────────────────────────────────────────────────────────────
@@ -164,8 +195,6 @@ private fun HomeContent(
             bottom = innerPadding.calculateBottomPadding() + 16.dp
         )
     ) {
-        // Pass a callback so HomeScreen knows when the user picks an instance
-        // and can immediately show the MANAGE button without waiting for ON_RESUME.
         item { InstancePickerCard(onInstanceChanged = onInstancePicked) }
 
         item {
@@ -275,7 +304,7 @@ private fun SectionHeader(
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground)
+                color      = MaterialTheme.colorScheme.onBackground)
             if (subtitle != null)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
