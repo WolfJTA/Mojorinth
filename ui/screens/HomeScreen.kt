@@ -41,6 +41,7 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onBrowseType: (String) -> Unit = {},
     onManageInstance: () -> Unit = {},
+    onOpenDrawer: () -> Unit = {},          // ← NEW: opens the side drawer
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -99,7 +100,6 @@ fun HomeScreen(
                             "MANAGE",
                             style      = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            // Dim the label when no instance is active so it looks inactive
                             color      = if (activeInstance != null)
                                 MaterialTheme.colorScheme.primary
                             else
@@ -116,6 +116,11 @@ fun HomeScreen(
                     }
                     IconButton(onClick = onSettingsClick) {
                         Icon(Icons.Default.Settings, "Settings",
+                            tint = MaterialTheme.colorScheme.onBackground)
+                    }
+                    // ← NEW: hamburger menu button
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(Icons.Default.Menu, "Menu",
                             tint = MaterialTheme.colorScheme.onBackground)
                     }
                 },
@@ -160,9 +165,7 @@ fun HomeScreen(
     if (showNoInstanceDialog) {
         AlertDialog(
             onDismissRequest = { showNoInstanceDialog = false },
-            icon             = {
-                Text("📦", fontSize = 32.sp)
-            },
+            icon             = { Text("📦", fontSize = 32.sp) },
             title            = { Text("No Instance Selected", fontWeight = FontWeight.Bold) },
             text             = {
                 Text(
@@ -171,7 +174,7 @@ fun HomeScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                 )
             },
-            confirmButton    = {
+            confirmButton = {
                 Button(onClick = { showNoInstanceDialog = false }) { Text("Got it") }
             }
         )
@@ -325,12 +328,12 @@ private data class BrowseItem(val label: String, val emoji: String, val type: St
 private fun BrowseGrid(onBrowseType: (String) -> Unit) {
     val green = MaterialTheme.colorScheme.primary
     val items = listOf(
-        BrowseItem("Mods",           "⚙️", "mod",          green),
-        BrowseItem("Modpacks",       "📦", "modpack",      Color(0xFF42A5F5)),
-        BrowseItem("Shaders",        "✨", "shader",       Color(0xFFFFA726)),
-        BrowseItem("Resource\nPacks","🎨", "resourcepack", Color(0xFFAB47BC)),
-        BrowseItem("Data\nPacks",    "📋", "datapack",     Color(0xFF26A69A)),
-        BrowseItem("Plugins",        "🔌", "plugin",       Color(0xFFEF5350))
+        BrowseItem("Mods",            "⚙️",  "mod",          green),
+        BrowseItem("Modpacks",        "📦", "modpack",      Color(0xFF42A5F5)),
+        BrowseItem("Shaders",         "✨",  "shader",       Color(0xFFFFA726)),
+        BrowseItem("Resource\nPacks", "🎨", "resourcepack", Color(0xFFAB47BC)),
+        BrowseItem("Data\nPacks",     "📋", "datapack",     Color(0xFF26A69A)),
+        BrowseItem("Plugins",         "🔌", "plugin",       Color(0xFFEF5350))
     )
     LazyRow(
         contentPadding        = PaddingValues(horizontal = 16.dp),
