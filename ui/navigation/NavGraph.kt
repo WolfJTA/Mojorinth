@@ -18,12 +18,13 @@ fun ModrinthNavGraph(
 
         composable(Screen.Home.route) {
             HomeScreen(
-                onModClick          = { navController.navigate(Screen.ModDetail.createRoute(it)) },
-                onSearchClick       = { navController.navigate(Screen.ProjectTypePicker.route) },
-                onDownloadsClick    = { navController.navigate(Screen.Downloads.route) },
-                onSettingsClick     = { navController.navigate(Screen.Settings.route) },
-                onBrowseType        = { navController.navigate(Screen.Browse.createRoute(it)) },
-                onManageInstance    = { navController.navigate(Screen.InstanceManager.route) }  // ← NEW
+                onModClick       = { navController.navigate(Screen.ModDetail.createRoute(it)) },
+                onSearchClick    = { navController.navigate(Screen.ProjectTypePicker.route) },
+                onDownloadsClick = { navController.navigate(Screen.Downloads.route) },
+                onSettingsClick  = { navController.navigate(Screen.Settings.route) },
+                onBrowseType     = { navController.navigate(Screen.Browse.createRoute(it)) },
+                onManageInstance = { navController.navigate(Screen.InstanceManager.route) },
+                onLogsClick      = { navController.navigate(Screen.LogAnalyzer.route) }  // ← NEW
             )
         }
 
@@ -46,7 +47,7 @@ fun ModrinthNavGraph(
             Screen.Browse.route,
             arguments = listOf(navArgument("projectType") { type = NavType.StringType })
         ) { backStackEntry ->
-            val projectType = backStackEntry.arguments?.getString("projectType") ?: "mod"
+            val projectType = backStackEntry.arguments?.getString("projectType") ?: return@composable
             BrowseScreen(
                 projectType = projectType,
                 onModClick  = { navController.navigate(Screen.ModDetail.createRoute(it)) },
@@ -65,9 +66,13 @@ fun ModrinthNavGraph(
             )
         }
 
-        // ── Instance Manager ──────────────────────────────────────────────
         composable(Screen.InstanceManager.route) {
             InstanceManagerScreen(onBack = { navController.popBackStack() })
+        }
+
+        // ── Log Analyzer ──────────────────────────────────────────────────────
+        composable(Screen.LogAnalyzer.route) {
+            LogAnalyzerScreen(onBack = { navController.popBackStack() })
         }
     }
 }

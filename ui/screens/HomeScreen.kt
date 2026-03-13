@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,6 +32,7 @@ import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.HomeUiState
 import com.example.modrinthforandroid.viewmodel.HomeViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,11 +43,11 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onBrowseType: (String) -> Unit = {},
     onManageInstance: () -> Unit = {},
+    onLogsClick: () -> Unit = {},             // ← NEW
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // Track active instance reactively so the MANAGE button state stays fresh
     var activeInstance by remember { mutableStateOf(InstanceManager.activeInstanceName) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -58,101 +60,131 @@ fun HomeScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Show this when MANAGE is tapped but no instance is active
     var showNoInstanceDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "M", fontWeight = FontWeight.Black,
-                                color    = MaterialTheme.colorScheme.onPrimary,
-                                fontSize = 16.sp
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Mojorinth", fontWeight = FontWeight.Black,
-                            color    = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 20.sp
-                        )
-                    }
+    // ── Drawer state ──────────────────────────────────────────────────────────
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope       = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState   = drawerState,
+        drawerContent = {
+            AppDrawer(
+                activeInstance   = activeInstance,
+                onLogsClick      = {
+                    scope.launch { drawerState.close() }
+                    onLogsClick()
                 },
-                actions = {
-                    // MANAGE INSTANCE — always visible; guards itself with a dialog
-                    TextButton(
-                        onClick = {
-                            if (activeInstance != null) onManageInstance()
-                            else showNoInstanceDialog = true
-                        }
-                    ) {
-                        Text(
-                            "MANAGE",
-                            style      = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            // Dim the label when no instance is active so it looks inactive
-                            color      = if (activeInstance != null)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
-                        )
-                    }
-                    IconButton(onClick = onSearchClick) {
-                        Icon(Icons.Default.Search, "Browse",
-                            tint = MaterialTheme.colorScheme.onBackground)
-                    }
-                    IconButton(onClick = onDownloadsClick) {
-                        Icon(Icons.Default.Build, "Downloads",
-                            tint = MaterialTheme.colorScheme.onBackground)
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, "Settings",
-                            tint = MaterialTheme.colorScheme.onBackground)
-                    }
+                onManageInstance = {
+                    scope.launch { drawerState.close() }
+                    if (activeInstance != null) onManageInstance()
+                    else showNoInstanceDialog = true
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background)
+                onSettingsClick  = {
+                    scope.launch { drawerState.close() }
+                    onSettingsClick()
+                },
+                onClose          = { scope.launch { drawerState.close() } }
             )
         }
-    ) { innerPadding ->
-        when {
-            uiState.isLoading -> Box(
-                Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
-
-            uiState.error != null -> Box(
-                Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "😕 ${uiState.error}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Button(onClick = { viewModel.refresh() }) { Text("Retry") }
-                }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "M", fontWeight = FontWeight.Black,
+                                    color    = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 16.sp
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Mojorinth", fontWeight = FontWeight.Black,
+                                color    = MaterialTheme.colorScheme.onBackground,
+                                fontSize = 20.sp
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        // ── Hamburger ─────────────────────────────────────
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(
+                                Icons.Default.Menu, "Menu",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    },
+                    actions = {
+                        // Keep the quick-access actions in the top bar too
+                        TextButton(
+                            onClick = {
+                                if (activeInstance != null) onManageInstance()
+                                else showNoInstanceDialog = true
+                            }
+                        ) {
+                            Text(
+                                "MANAGE",
+                                style      = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color      = if (activeInstance != null)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                            )
+                        }
+                        IconButton(onClick = onSearchClick) {
+                            Icon(Icons.Default.Search, "Browse",
+                                tint = MaterialTheme.colorScheme.onBackground)
+                        }
+                        IconButton(onClick = onDownloadsClick) {
+                            Icon(Icons.Default.Build, "Downloads",
+                                tint = MaterialTheme.colorScheme.onBackground)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background)
+                )
             }
+        ) { innerPadding ->
+            when {
+                uiState.isLoading -> Box(
+                    Modifier.fillMaxSize().padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
 
-            else -> HomeContent(
-                uiState          = uiState,
-                onModClick       = onModClick,
-                onBrowseType     = onBrowseType,
-                onManageInstance = onManageInstance,
-                onInstancePicked = { activeInstance = InstanceManager.activeInstanceName },
-                innerPadding     = innerPadding
-            )
+                uiState.error != null -> Box(
+                    Modifier.fillMaxSize().padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "😕 ${uiState.error}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { viewModel.refresh() }) { Text("Retry") }
+                    }
+                }
+
+                else -> HomeContent(
+                    uiState          = uiState,
+                    onModClick       = onModClick,
+                    onBrowseType     = onBrowseType,
+                    onManageInstance = onManageInstance,
+                    onInstancePicked = { activeInstance = InstanceManager.activeInstanceName },
+                    innerPadding     = innerPadding
+                )
+            }
         }
     }
 
@@ -160,9 +192,7 @@ fun HomeScreen(
     if (showNoInstanceDialog) {
         AlertDialog(
             onDismissRequest = { showNoInstanceDialog = false },
-            icon             = {
-                Text("📦", fontSize = 32.sp)
-            },
+            icon             = { Text("📦", fontSize = 32.sp) },
             title            = { Text("No Instance Selected", fontWeight = FontWeight.Bold) },
             text             = {
                 Text(
@@ -171,11 +201,180 @@ fun HomeScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                 )
             },
-            confirmButton    = {
+            confirmButton = {
                 Button(onClick = { showNoInstanceDialog = false }) { Text("Got it") }
             }
         )
     }
+}
+
+// ─── Side Drawer ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun AppDrawer(
+    activeInstance: String?,
+    onLogsClick: () -> Unit,
+    onManageInstance: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onClose: () -> Unit
+) {
+    ModalDrawerSheet(
+        drawerContainerColor = MaterialTheme.colorScheme.background
+    ) {
+        // Header
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "M", fontWeight = FontWeight.Black,
+                        color    = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 20.sp
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Mojorinth",
+                    fontWeight = FontWeight.Black,
+                    fontSize   = 20.sp,
+                    color      = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.Close, "Close menu",
+                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Active instance badge
+            activeInstance?.let {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                ) {
+                    Row(
+                        modifier          = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📦", fontSize = 14.sp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            it,
+                            style      = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = MaterialTheme.colorScheme.primary,
+                            maxLines   = 1,
+                            overflow   = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        Spacer(Modifier.height(8.dp))
+
+        // ── Nav items ─────────────────────────────────────────────────────────
+        DrawerNavItem(
+            icon    = Icons.Default.BugReport,
+            label   = "Log Analyzer",
+            badge   = "NEW",
+            onClick = onLogsClick
+        )
+
+        DrawerNavItem(
+            icon    = Icons.Default.Folder,
+            label   = "Instance Manager",
+            enabled = activeInstance != null,
+            hint    = if (activeInstance == null) "Select an instance first" else null,
+            onClick = onManageInstance
+        )
+
+        Spacer(Modifier.weight(1f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+        Spacer(Modifier.height(4.dp))
+
+        DrawerNavItem(
+            icon    = Icons.Default.Settings,
+            label   = "Settings",
+            onClick = onSettingsClick
+        )
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun DrawerNavItem(
+    icon: ImageVector,
+    label: String,
+    badge: String? = null,
+    enabled: Boolean = true,
+    hint: String? = null,
+    onClick: () -> Unit
+) {
+    NavigationDrawerItem(
+        icon  = {
+            Icon(
+                icon, null,
+                tint = if (enabled)
+                    MaterialTheme.colorScheme.onSurface
+                else
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+            )
+        },
+        label = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    label,
+                    color = if (enabled)
+                        MaterialTheme.colorScheme.onSurface
+                    else
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                )
+                badge?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Text(
+                            it,
+                            modifier   = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            style      = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color      = MaterialTheme.colorScheme.onPrimary,
+                            fontSize   = 8.sp
+                        )
+                    }
+                }
+            }
+        },
+        badge = hint?.let {
+            {
+                Text(
+                    it,
+                    style  = MaterialTheme.typography.labelSmall,
+                    color  = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                    fontSize = 9.sp
+                )
+            }
+        },
+        selected = false,
+        onClick  = { if (enabled) onClick() },
+        modifier = Modifier.padding(horizontal = 12.dp)
+    )
 }
 
 // ─── Main content ─────────────────────────────────────────────────────────────
@@ -200,89 +399,42 @@ private fun HomeContent(
         item {
             Spacer(Modifier.height(20.dp))
             SectionHeader("Browse", "What are you looking for?")
-            Spacer(Modifier.height(12.dp))
-            BrowseGrid(onBrowseType = onBrowseType)
+        }
+
+        item {
+            BrowseTypeGrid(onBrowseType = onBrowseType)
+            Spacer(Modifier.height(20.dp))
         }
 
         if (uiState.trendingMods.isNotEmpty()) {
+            item { SectionHeader("Trending Mods", "Popular right now") }
             item {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader("Trending Mods", "Most downloaded right now",
-                    onSeeAll = { onBrowseType("mod") })
-                Spacer(Modifier.height(12.dp))
-                ModRow(mods = uiState.trendingMods, onModClick = onModClick)
+                FeaturedRow(mods = uiState.trendingMods, onModClick = onModClick)
+                Spacer(Modifier.height(20.dp))
             }
         }
 
         if (uiState.trendingModpacks.isNotEmpty()) {
+            item { SectionHeader("Trending Modpacks", "Top modpacks") }
             item {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader("Popular Modpacks", "Ready-to-play curated packs",
-                    onSeeAll = { onBrowseType("modpack") })
-                Spacer(Modifier.height(12.dp))
-                ModRow(mods = uiState.trendingModpacks, onModClick = onModClick)
+                FeaturedRow(mods = uiState.trendingModpacks, onModClick = onModClick)
+                Spacer(Modifier.height(20.dp))
             }
         }
 
         if (uiState.trendingShaders.isNotEmpty()) {
+            item { SectionHeader("Trending Shaders", "Make it beautiful") }
             item {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader("Top Shaders", "Make your game beautiful",
-                    onSeeAll = { onBrowseType("shader") })
-                Spacer(Modifier.height(12.dp))
-                ModRow(mods = uiState.trendingShaders, onModClick = onModClick)
+                FeaturedRow(mods = uiState.trendingShaders, onModClick = onModClick)
+                Spacer(Modifier.height(20.dp))
             }
         }
 
         if (uiState.newlyUpdated.isNotEmpty()) {
+            item { SectionHeader("Recently Updated", "Fresh content") }
             item {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader("Recently Updated", "Fresh patches & new features",
-                    onSeeAll = { onBrowseType("mod") })
-                Spacer(Modifier.height(12.dp))
-                ModRow(mods = uiState.newlyUpdated, onModClick = onModClick)
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-    }
-}
-
-// ─── Instance badge chip ──────────────────────────────────────────────────────
-
-@Composable
-private fun InstanceBadge(
-    icon: String,
-    label: String,
-    value: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape    = RoundedCornerShape(8.dp),
-        color    = color.copy(alpha = 0.10f),
-        modifier = modifier
-    ) {
-        Row(
-            modifier          = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(icon, fontSize = 13.sp)
-            Spacer(Modifier.width(6.dp))
-            Column {
-                Text(
-                    label,
-                    style    = MaterialTheme.typography.labelSmall,
-                    color    = color.copy(alpha = 0.75f),
-                    fontSize = 9.sp
-                )
-                Text(
-                    value,
-                    style      = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color      = color,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis
-                )
+                FeaturedRow(mods = uiState.newlyUpdated, onModClick = onModClick)
+                Spacer(Modifier.height(20.dp))
             }
         }
     }
@@ -294,135 +446,173 @@ private fun InstanceBadge(
 private fun SectionHeader(
     title: String,
     subtitle: String? = null,
-    onSeeAll: (() -> Unit)? = null
+    onSeeAll: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier              = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalAlignment     = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier          = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color      = MaterialTheme.colorScheme.onBackground)
-            if (subtitle != null)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall,
+            Text(title, fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground)
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f))
+            }
         }
-        if (onSeeAll != null)
-            TextButton(onClick = onSeeAll) {
-                Text("See all", style = MaterialTheme.typography.labelMedium,
+        onSeeAll?.let {
+            TextButton(onClick = it) {
+                Text("See all", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary)
             }
+        }
     }
 }
 
-// ─── Browse Grid ──────────────────────────────────────────────────────────────
+// ─── Browse type grid ─────────────────────────────────────────────────────────
 
-private data class BrowseItem(val label: String, val emoji: String, val type: String, val tint: Color)
+private val BROWSE_TYPES = listOf(
+    Triple("🧩", "Mods",            "mod"),
+    Triple("🎨", "Resource Packs",  "resourcepack"),
+    Triple("🌍", "Data Packs",      "datapack"),
+    Triple("✨", "Shaders",         "shader"),
+    Triple("🗺", "Modpacks",        "modpack"),
+    Triple("🔌", "Plugins",         "plugin")
+)
 
 @Composable
-private fun BrowseGrid(onBrowseType: (String) -> Unit) {
-    val green = MaterialTheme.colorScheme.primary
-    val items = listOf(
-        BrowseItem("Mods",           "⚙️", "mod",          green),
-        BrowseItem("Modpacks",       "📦", "modpack",      Color(0xFF42A5F5)),
-        BrowseItem("Shaders",        "✨", "shader",       Color(0xFFFFA726)),
-        BrowseItem("Resource\nPacks","🎨", "resourcepack", Color(0xFFAB47BC)),
-        BrowseItem("Data\nPacks",    "📋", "datapack",     Color(0xFF26A69A)),
-        BrowseItem("Plugins",        "🔌", "plugin",       Color(0xFFEF5350))
-    )
-    LazyRow(
-        contentPadding        = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+private fun BrowseTypeGrid(onBrowseType: (String) -> Unit) {
+    val rows = BROWSE_TYPES.chunked(3)
+    Column(
+        modifier            = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(items) { item ->
-            Surface(
-                onClick  = { onBrowseType(item.type) },
-                shape    = RoundedCornerShape(14.dp),
-                color    = item.tint.copy(alpha = 0.1f),
-                modifier = Modifier
-                    .width(88.dp)
-                    .height(80.dp)
-                    .border(1.dp, item.tint.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
-            ) {
-                Column(
-                    modifier            = Modifier.fillMaxSize().padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(item.emoji, fontSize = 24.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        item.label,
-                        style      = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color      = item.tint,
-                        maxLines   = 2,
-                        overflow   = TextOverflow.Ellipsis,
-                        lineHeight = 13.sp
+        rows.forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (emoji, label, type) ->
+                    BrowseTypeChip(
+                        emoji    = emoji,
+                        label    = label,
+                        onClick  = { onBrowseType(type) },
+                        modifier = Modifier.weight(1f)
                     )
+                }
+                // Pad if row is short
+                repeat(3 - row.size) {
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
     }
 }
 
-// ─── Horizontal Mod Row ───────────────────────────────────────────────────────
+@Composable
+private fun BrowseTypeChip(
+    emoji: String,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape   = RoundedCornerShape(12.dp),
+        color   = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border  = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        ),
+        modifier = modifier
+    ) {
+        Column(
+            modifier              = Modifier.padding(vertical = 14.dp),
+            horizontalAlignment   = Alignment.CenterHorizontally,
+            verticalArrangement   = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(emoji, fontSize = 22.sp)
+            Text(
+                label,
+                style    = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color    = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+// ─── Featured row ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun ModRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
+private fun FeaturedRow(mods: List<SearchResult>, onModClick: (String) -> Unit) {
     LazyRow(
-        contentPadding        = PaddingValues(horizontal = 16.dp),
+        contentPadding      = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(mods, key = { it.projectId }) { mod ->
-            Surface(
-                onClick        = { onModClick(mod.projectId) },
-                shape          = RoundedCornerShape(14.dp),
-                color          = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
-                modifier       = Modifier.width(150.dp)
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    AsyncImage(
-                        model              = mod.iconUrl,
-                        contentDescription = "${mod.title} icon",
-                        modifier           = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                        contentScale       = ContentScale.Crop
-                    )
-                    Spacer(Modifier.height(8.dp))
+            ModCard(mod = mod, onClick = { onModClick(mod.projectId) })
+        }
+    }
+}
+
+@Composable
+private fun ModCard(mod: SearchResult, onClick: () -> Unit) {
+    Surface(
+        onClick  = onClick,
+        shape    = RoundedCornerShape(12.dp),
+        color    = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier
+            .width(120.dp)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                RoundedCornerShape(12.dp)
+            )
+    ) {
+        Column(
+            modifier            = Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            AsyncImage(
+                model              = mod.iconUrl,
+                contentDescription = "${mod.title} icon",
+                modifier           = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale       = ContentScale.Crop
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                mod.title,
+                style      = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines   = 2,
+                overflow   = TextOverflow.Ellipsis,
+                color      = MaterialTheme.colorScheme.onSurface,
+                lineHeight = 16.sp
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "⬇ ${formatNumber(mod.downloads)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            mod.categories.firstOrNull()?.let { cat ->
+                Spacer(Modifier.height(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                ) {
                     Text(
-                        mod.title,
-                        style      = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines   = 2,
-                        overflow   = TextOverflow.Ellipsis,
-                        color      = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 16.sp
+                        cat,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "⬇ ${formatNumber(mod.downloads)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    mod.categories.firstOrNull()?.let { cat ->
-                        Spacer(Modifier.height(4.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        ) {
-                            Text(
-                                cat,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                style    = MaterialTheme.typography.labelSmall,
-                                color    = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
                 }
             }
         }
