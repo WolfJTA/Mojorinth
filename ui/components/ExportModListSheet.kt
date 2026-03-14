@@ -40,7 +40,7 @@ fun ExportModListSheet(onDismiss: () -> Unit) {
 
     // SAF file creator — prompts user to pick save location + filename
     val saveLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip")
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         if (instanceConfig == null || instanceName == null || rootUri == null) {

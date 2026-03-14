@@ -48,6 +48,7 @@ import com.example.modrinthforandroid.data.model.ModProject
 import com.example.modrinthforandroid.data.model.ModVersion
 import com.example.modrinthforandroid.ui.components.DownloadProgressBanner
 import com.example.modrinthforandroid.ui.components.DownloadStatus
+import com.example.modrinthforandroid.ui.components.ModpackInstallSheet
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.ModDetailUiState
 import com.example.modrinthforandroid.viewmodel.ModDetailViewModel
@@ -71,25 +72,18 @@ import java.util.UUID
 
 // ─── Download state ────────────────────────────────────────────────────────────
 
-/**
- * Represents the live state of one in-flight or completed download.
- */
 enum class DownloadState { IDLE, QUEUED, DOWNLOADING, DONE, FAILED }
 
 data class VersionDownloadInfo(
     val versionId: String,
-    val projectSlug: String = "",   // used by post-download rules engine
+    val projectSlug: String = "",
     val workerId: UUID? = null,
     val state: DownloadState = DownloadState.IDLE,
-    val progress: Int = 0          // 0-100
+    val progress: Int = 0
 )
 
 // ─── Download helper ──────────────────────────────────────────────────────────
 
-/**
- * Enqueues a WorkManager download job and returns the worker UUID so the
- * caller can observe live progress via WorkManager.getWorkInfoByIdLiveData.
- */
 fun triggerDownload(
     context: Context,
     url: String,
@@ -151,10 +145,8 @@ fun ModDetailScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
-    // Map of versionId → VersionDownloadInfo (tracks progress per version)
     var downloadInfoMap by remember { mutableStateOf(mapOf<String, VersionDownloadInfo>()) }
 
-    // Banner list: only show versions that are actively downloading or just finished
     val bannerDownloads = remember(downloadInfoMap) {
         downloadInfoMap.values
             .filter { it.state != DownloadState.IDLE }
@@ -177,13 +169,12 @@ fun ModDetailScreen(
     val repository     = remember { com.example.modrinthforandroid.data.ModrinthRepository() }
     val coroutineScope = rememberCoroutineScope()
 
-    // Snackbar message for the dependency toast
     var toastMessage by remember { mutableStateOf<String?>(null) }
-
-    // Post-download renderer rule result — drives the "we changed your renderer" dialog
     var rendererChangeResult: RendererChangeResult? by remember { mutableStateOf(null) }
 
-    // Enqueue one file download and register it in downloadInfoMap
+    // ── Modpack install sheet state ───────────────────────────────────────────
+    var pendingModpackVersion by remember { mutableStateOf<Pair<ModVersion, ModProject>?>(null) }
+
     fun enqueueOne(
         version: ModVersion,
         displayTitle: String,
@@ -214,8 +205,13 @@ fun ModDetailScreen(
         ))
     }
 
-    // Main download entry point — resolves + bundles required dependencies
     fun startDownload(version: ModVersion, project: ModProject) {
+        // Modpacks get their own install flow — create a new instance instead
+        if (project.projectType == "modpack") {
+            pendingModpackVersion = version to project
+            return
+        }
+
         val instanceConfig = InstanceManager.activeInstanceConfig
 
         // Always enqueue the main mod immediately for instant feedback
@@ -235,7 +231,6 @@ fun ModDetailScreen(
                 val required = resolved.filter { !it.isOptional && it.version != null }
                 val optional = resolved.filter {  it.isOptional && it.version != null }
 
-                // Enqueue all required deps
                 required.forEach { dep ->
                     dep.version?.let { depVer ->
                         enqueueOne(
@@ -246,22 +241,18 @@ fun ModDetailScreen(
                     }
                 }
 
-                // Build toast message
                 val depCount = required.size
                 toastMessage = when {
                     depCount == 0 && optional.isNotEmpty() ->
                         "Downloading ${project.title} (${optional.size} optional dep${if (optional.size != 1) "s" else ""} not included)"
                     depCount > 0 ->
                         "Downloading ${project.title} + $depCount dependenc${if (depCount != 1) "ies" else "y"}"
-                    else ->
-                        null  // no deps — no toast needed
+                    else -> null
                 }
             }
         }
     }
 
-    // Observe WorkManager via Flow — one coroutine per active download,
-    // keyed on the stable worker UUID so Compose correctly manages lifecycles.
     val wm = WorkManager.getInstance(context)
 
     downloadInfoMap.values
@@ -284,7 +275,6 @@ fun ModDetailScreen(
                                 state    = newState,
                                 progress = if (newState == DownloadState.DONE) 100 else progress
                             ))
-                            // Phase 3 — post-download renderer rules
                             if (newState == DownloadState.DONE && info.projectSlug.isNotEmpty()) {
                                 val result = RendererRules.applyIfNeeded(
                                     context     = context,
@@ -325,12 +315,9 @@ fun ModDetailScreen(
                     )
                 )
 
-                // ── Download progress banner ──────────────────────────────
                 DownloadProgressBanner(
                     downloads = bannerDownloads,
-                    onDismiss = { id ->
-                        downloadInfoMap = downloadInfoMap - id
-                    }
+                    onDismiss = { id -> downloadInfoMap = downloadInfoMap - id }
                 )
             }
         }
@@ -367,7 +354,6 @@ fun ModDetailScreen(
                     )
             }
 
-            // ── Dependency toast ─────────────────────────────────────────
             toastMessage?.let { msg ->
                 LaunchedEffect(msg) {
                     kotlinx.coroutines.delay(4_000)
@@ -389,7 +375,7 @@ fun ModDetailScreen(
         }
     }
 
-    // ── Renderer change dialog (Phase 3) ─────────────────────────────────
+    // ── Renderer change dialog ────────────────────────────────────────────────
     rendererChangeResult?.let { result ->
         AlertDialog(
             onDismissRequest = { rendererChangeResult = null },
@@ -443,6 +429,19 @@ fun ModDetailScreen(
             }
         )
     }
+
+    // ── Modpack install sheet ─────────────────────────────────────────────────
+    pendingModpackVersion?.let { (version, project) ->
+        val mrpackFile = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull()
+        if (mrpackFile != null) {
+            ModpackInstallSheet(
+                modpackTitle = project.title,
+                mrpackUrl    = mrpackFile.url,
+                iconUrl      = project.iconUrl,
+                onDismiss    = { pendingModpackVersion = null }
+            )
+        }
+    }
 }
 
 // ─── Content + tabs ───────────────────────────────────────────────────────────
@@ -464,12 +463,9 @@ private fun ModDetailContent(
         add("Versions")
     }
 
-    // ── Recommended version — best match for active instance ─────────────
     val instanceConfig   = remember { InstanceManager.activeInstanceConfig }
     val recommendedVersion = remember(versions, instanceConfig) {
         if (instanceConfig == null) null else {
-            // Find the latest release that matches both MC version and loader.
-            // Falls back to MC-only match, then to null (no recommendation).
             val mcAndLoader = versions.filter { v ->
                 v.gameVersions.contains(instanceConfig.mcVersion) &&
                         v.loaders.any { it.equals(instanceConfig.loaderSlug, ignoreCase = true) }
@@ -477,7 +473,6 @@ private fun ModDetailContent(
             val mcOnly = versions.filter { v ->
                 v.gameVersions.contains(instanceConfig.mcVersion)
             }
-            // Prefer release channel, then beta, then alpha
             fun List<ModVersion>.bestRelease() =
                 firstOrNull { it.versionType == "release" }
                     ?: firstOrNull { it.versionType == "beta" }
@@ -620,7 +615,6 @@ private fun ModDetailHeader(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // ── Main download button — reflects live state ────────────────
             val green = MaterialTheme.colorScheme.primary
             Button(
                 onClick        = onDownloadClick,
@@ -680,7 +674,7 @@ private fun ModDetailHeader(
                         Spacer(Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                "Download",
+                                if (project.projectType == "modpack") "Install Modpack" else "Download",
                                 fontWeight = FontWeight.Bold,
                                 color      = MaterialTheme.colorScheme.onPrimary
                             )
@@ -699,7 +693,6 @@ private fun ModDetailHeader(
                 }
             }
 
-            // ── Recommended download button (instance-aware) ────────────
             if (recommendedVersion != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 val recState    = recommendedInfo?.state ?: DownloadState.IDLE
@@ -762,7 +755,6 @@ private fun ModDetailHeader(
                                     fontWeight = FontWeight.SemiBold,
                                     color      = MaterialTheme.colorScheme.primary
                                 )
-                                // Subtitle: version number + what it's matched to
                                 val mc     = instanceConfig?.mcVersion ?: ""
                                 val loader = instanceConfig?.loader ?: ""
                                 Text(
@@ -818,13 +810,11 @@ private fun DownloadPickerSheet(
         versions.flatMap { it.loaders }.distinct().sorted()
     }
 
-    // Pre-populate from active instance config if available
     val instanceConfig = remember { InstanceManager.activeInstanceConfig }
 
     var selectedMc     by remember {
         mutableStateOf<String?>(
             instanceConfig?.mcVersion?.let { mc ->
-                // Only pre-select if this mod actually has a version for that MC version
                 allMcVersions.firstOrNull { it == mc }
             }
         )
@@ -832,7 +822,6 @@ private fun DownloadPickerSheet(
     var selectedLoader by remember {
         mutableStateOf<String?>(
             instanceConfig?.loaderSlug?.let { slug ->
-                // Only pre-select if this mod supports that loader
                 allLoaders.firstOrNull { it == slug }
             }
         )
@@ -848,7 +837,6 @@ private fun DownloadPickerSheet(
     }
 
     pendingDownloadVersion?.let { version ->
-        val info = downloadInfoMap[version.id]
         AlertDialog(
             onDismissRequest = { pendingDownloadVersion = null },
             title   = { Text("Already downloaded") },
@@ -898,12 +886,11 @@ private fun DownloadPickerSheet(
                 .padding(horizontal = 16.dp)
         ) {
             Text(
-                "Download ${project.title}",
+                if (project.projectType == "modpack") "Install ${project.title}" else "Download ${project.title}",
                 style      = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
 
-            // ── Instance pre-filter hint ──────────────────────────────────
             if (instanceConfig != null && (selectedMc != null || selectedLoader != null)) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
@@ -1149,12 +1136,11 @@ private fun PickerVersionCard(
                 DownloadButton(state = state, progress = progress, onClick = onDownload)
             }
 
-            // ── Inline progress bar under row content ─────────────────────
             if (state == DownloadState.DOWNLOADING || state == DownloadState.QUEUED) {
                 Spacer(Modifier.height(8.dp))
                 InlineProgressBar(
-                    progress      = if (state == DownloadState.QUEUED) -1 else progress,
-                    color         = MaterialTheme.colorScheme.primary
+                    progress = if (state == DownloadState.QUEUED) -1 else progress,
+                    color    = MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -1320,7 +1306,10 @@ private fun VersionsTab(
                                 pendingDownloadVersion = version
                             } else {
                                 onStartDownload(version)
-                                snackbarMessage = "Downloading ${version.name}…"
+                                snackbarMessage = if (projectType == "modpack")
+                                    "Installing ${version.name}…"
+                                else
+                                    "Downloading ${version.name}…"
                             }
                         }
                     )
@@ -1388,7 +1377,6 @@ private fun VersionCard(
                             maxLines   = 1,
                             overflow   = TextOverflow.Ellipsis
                         )
-                        // Done badge inline with title
                         if (state == DownloadState.DONE) {
                             Spacer(Modifier.width(6.dp))
                             Surface(
@@ -1530,7 +1518,6 @@ private fun VersionCard(
                 DownloadButton(state = state, progress = progress, onClick = onDownload)
             }
 
-            // ── Inline progress bar ───────────────────────────────────────
             if (state == DownloadState.DOWNLOADING || state == DownloadState.QUEUED) {
                 Spacer(Modifier.height(8.dp))
                 InlineProgressBar(
@@ -1611,9 +1598,6 @@ private fun VersionCard(
 
 // ─── Shared Download Button ───────────────────────────────────────────────────
 
-/**
- * A single button that morphs through Idle → Queued → Downloading → Done states.
- */
 @Composable
 fun DownloadButton(
     state: DownloadState,
@@ -1678,10 +1662,6 @@ fun DownloadButton(
     }
 }
 
-/**
- * Slim animated progress bar shown inline under a version card while downloading.
- * Pass progress = -1 for indeterminate / queued shimmer.
- */
 @Composable
 fun InlineProgressBar(progress: Int, color: Color) {
     val animatedProgress by animateFloatAsState(
@@ -1706,7 +1686,6 @@ fun InlineProgressBar(progress: Int, color: Color) {
             .background(color.copy(alpha = 0.15f))
     ) {
         if (progress < 0) {
-            // Indeterminate shimmer
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
