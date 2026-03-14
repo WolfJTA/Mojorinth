@@ -81,11 +81,17 @@ fun HomeScreen(
     var showMojoWarning by remember { mutableStateOf(!mojoInstalled && !settings.hasSeenTutorial) }
 
     var activeInstance by remember { mutableStateOf(InstanceManager.activeInstanceName) }
+    var activeInstanceDisplayName by remember {
+        mutableStateOf(InstanceManager.activeInstanceConfig?.name?.takeIf { it.isNotBlank() }
+            ?: InstanceManager.activeInstanceName)
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 activeInstance = InstanceManager.activeInstanceName
+                activeInstanceDisplayName = InstanceManager.activeInstanceConfig?.name
+                    ?.takeIf { it.isNotBlank() } ?: InstanceManager.activeInstanceName
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -145,6 +151,8 @@ fun HomeScreen(
                 importResult   = result
                 importProgress = null
                 activeInstance = InstanceManager.activeInstanceName
+                activeInstanceDisplayName = InstanceManager.activeInstanceConfig?.name
+                    ?.takeIf { it.isNotBlank() } ?: InstanceManager.activeInstanceName
             } catch (e: Exception) {
                 importError    = e.message ?: "Unknown error"
                 importProgress = null
@@ -162,7 +170,8 @@ fun HomeScreen(
         gesturesEnabled = false,  // disable built-in (too strict), we handle it ourselves
         drawerContent = {
             AppDrawer(
-                activeInstance   = activeInstance,
+                activeInstance        = activeInstance,
+                activeInstanceDisplay = activeInstanceDisplayName,
                 onLogsClick      = {
                     scope.launch { drawerState.close() }
                     onLogsClick()
@@ -300,15 +309,21 @@ fun HomeScreen(
                 uiState.isLoading -> MojorinthSplash(innerPadding = innerPadding)
 
                 uiState.error != null -> OfflineScreen(
-                    innerPadding     = innerPadding,
-                    onRetry          = { viewModel.refresh() },
-                    onManageInstance = onManageInstance,
-                    onSearchClick    = onSearchClick,
-                    onDownloadsClick = onDownloadsClick,
-                    onImportMrpack   = { if (InstanceManager.rootUri != null) mrpackFilePicker.launch(arrayOf("*/*")) else showNoInstanceDialog = true },
-                    onSettingsClick  = onSettingsClick,
-                    activeInstance   = activeInstance,
-                    onNoInstance     = { showNoInstanceDialog = true }
+                    innerPadding          = innerPadding,
+                    onRetry               = { viewModel.refresh() },
+                    onManageInstance      = onManageInstance,
+                    onSearchClick         = onSearchClick,
+                    onDownloadsClick      = onDownloadsClick,
+                    onImportMrpack        = { if (InstanceManager.rootUri != null) mrpackFilePicker.launch(arrayOf("*/*")) else showNoInstanceDialog = true },
+                    onSettingsClick       = onSettingsClick,
+                    activeInstance        = activeInstance,
+                    activeInstanceDisplay = activeInstanceDisplayName,
+                    onNoInstance          = { showNoInstanceDialog = true },
+                    onInstanceChanged     = {
+                        activeInstance = InstanceManager.activeInstanceName
+                        activeInstanceDisplayName = InstanceManager.activeInstanceConfig?.name
+                            ?.takeIf { it.isNotBlank() } ?: InstanceManager.activeInstanceName
+                    }
                 )
 
                 else -> HomeContent(
@@ -530,6 +545,7 @@ fun HomeScreen(
 @Composable
 private fun AppDrawer(
     activeInstance: String?,
+    activeInstanceDisplay: String?,
     onLogsClick: () -> Unit,
     onManageInstance: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -616,7 +632,7 @@ private fun AppDrawer(
             icon    = Icons.Default.FileDownload,
             label   = "Export Mod List",
             enabled = activeInstance != null,
-            hint    = if (activeInstance == null) "Select an instance first" else null,
+            hint    = if (activeInstance == null) "Select an instance first" else activeInstanceDisplay,
             onClick = onExport
         )
 
@@ -637,7 +653,7 @@ private fun AppDrawer(
             icon    = Icons.Default.Folder,
             label   = "Instance Manager",
             enabled = activeInstance != null,
-            hint    = if (activeInstance == null) "Select an instance first" else null,
+            hint    = if (activeInstance == null) "Select an instance first" else activeInstanceDisplay,
             onClick = onManageInstance
         )
 
@@ -763,37 +779,46 @@ private fun OfflineScreen(
     onImportMrpack: () -> Unit,
     onSettingsClick: () -> Unit,
     activeInstance: String?,
-    onNoInstance: () -> Unit
+    activeInstanceDisplay: String?,
+    onNoInstance: () -> Unit,
+    onInstanceChanged: () -> Unit
 ) {
     val context = LocalContext.current
     val primary = MaterialTheme.colorScheme.primary
 
-    Box(
-        Modifier.fillMaxSize().padding(innerPadding),
-        contentAlignment = Alignment.Center
+    LazyColumn(
+        modifier            = Modifier.fillMaxSize().padding(innerPadding),
+        contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Column(
-            modifier            = Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        item {
             Text("📡", fontSize = 52.sp)
+        }
+        item {
             Text(
                 "No Internet Connection",
                 style      = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color      = MaterialTheme.colorScheme.onBackground
             )
+        }
+        item {
             Text(
                 "Browsing Modrinth needs a connection, but you can still do plenty offline.",
                 style     = MaterialTheme.typography.bodySmall,
                 color     = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center
             )
+        }
 
-            Spacer(Modifier.height(4.dp))
+        // ── Instance picker ───────────────────────────────────────────
+        item {
+            InstancePickerCard(onInstanceChanged = onInstanceChanged)
+        }
 
-            // ── You can still… card ───────────────────────────────────────
+        // ── You can still… card ───────────────────────────────────────
+        item {
             Surface(
                 shape          = RoundedCornerShape(16.dp),
                 color          = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -826,7 +851,7 @@ private fun OfflineScreen(
                     OfflineAction(
                         emoji    = "📤",
                         label    = "Export Mod List",
-                        sublabel = if (activeInstance != null) activeInstance else "Select an instance first",
+                        sublabel = activeInstanceDisplay ?: "Select an instance first",
                         enabled  = activeInstance != null,
                         onClick  = { if (activeInstance != null) onManageInstance() else onNoInstance() }
                     )
@@ -842,7 +867,7 @@ private fun OfflineScreen(
                     OfflineAction(
                         emoji    = "📦",
                         label    = "Manage Instance",
-                        sublabel = if (activeInstance != null) activeInstance else "Select an instance first",
+                        sublabel = activeInstanceDisplay ?: "Select an instance first",
                         enabled  = activeInstance != null,
                         onClick  = { if (activeInstance != null) onManageInstance() else onNoInstance() }
                     )
@@ -856,9 +881,9 @@ private fun OfflineScreen(
                     )
                 }
             }
+        }
 
-            Spacer(Modifier.height(4.dp))
-
+        item {
             Button(
                 onClick  = onRetry,
                 modifier = Modifier.fillMaxWidth()
