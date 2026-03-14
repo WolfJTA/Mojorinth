@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,7 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -222,6 +226,109 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("👋  Replay Tutorial")
+                }
+            }
+
+            // ── About ─────────────────────────────────────────────────────
+            SettingsSection("About") {
+                val clipboard = LocalClipboardManager.current
+                var copied by remember { mutableStateOf(false) }
+
+                Text(
+                    "Mojorinth",
+                    style      = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color      = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "A Modrinth client for Mojo Launcher on Android",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+
+                Spacer(Modifier.height(14.dp))
+
+                // Developer contact card
+                Surface(
+                    shape  = RoundedCornerShape(12.dp),
+                    color  = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier          = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("discord://discord.com/users/1066423261094744104")
+                                )
+                                // Fall back to browser if Discord isn't installed
+                                val browserIntent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("https://discord.com/users/1066423261094744104")
+                                )
+                                try {
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {
+                                    context.startActivity(browserIntent)
+                                }
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Discord blurple avatar circle
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF5865F2)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("@", fontSize = 20.sp)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "WolfJTA",
+                                style      = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color      = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "Discord — tap to open, copy icon to copy username",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        }
+                        // Copy username button
+                        IconButton(
+                            onClick  = {
+                                clipboard.setText(AnnotatedString("WolfJTA"))
+                                copied = true
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            if (copied) {
+                                LaunchedEffect(Unit) {
+                                    kotlinx.coroutines.delay(2000)
+                                    copied = false
+                                }
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Copied",
+                                    tint     = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy username",
+                                    tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
