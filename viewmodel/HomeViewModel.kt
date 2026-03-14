@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 
 // Kept for BrowseScreen compatibility
 sealed class ModListUiState {
@@ -39,23 +40,36 @@ class HomeViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.value = HomeUiState(isLoading = true)
             try {
-                // Fetch all rows in parallel
-                val modsDeferred        = async { repository.searchMods(sortIndex = "downloads", projectType = "mod",      limit = 10) }
-                val modpacksDeferred    = async { repository.searchMods(sortIndex = "downloads", projectType = "modpack",  limit = 10) }
-                val shadersDeferred     = async { repository.searchMods(sortIndex = "downloads", projectType = "shader",   limit = 10) }
-                val updatedDeferred     = async { repository.searchMods(sortIndex = "updated",   projectType = "mod",      limit = 10) }
+                // supervisorScope ensures a failure in one async child doesn't
+                // cancel the others or propagate as an uncaught exception
+                supervisorScope {
+                    val modsDeferred     = async { repository.searchMods(sortIndex = "downloads", projectType = "mod",     limit = 10) }
+                    val modpacksDeferred = async { repository.searchMods(sortIndex = "downloads", projectType = "modpack", limit = 10) }
+                    val shadersDeferred  = async { repository.searchMods(sortIndex = "downloads", projectType = "shader",  limit = 10) }
+                    val updatedDeferred  = async { repository.searchMods(sortIndex = "updated",   projectType = "mod",     limit = 10) }
 
-                _uiState.value = HomeUiState(
-                    isLoading        = false,
-                    trendingMods     = modsDeferred.await(),
-                    trendingModpacks = modpacksDeferred.await(),
-                    trendingShaders  = shadersDeferred.await(),
-                    newlyUpdated     = updatedDeferred.await()
-                )
+                    // Await each individually so one network failure doesn't crash all
+                    val mods     = try { modsDeferred.await()     } catch (e: Exception) { emptyList() }
+                    val modpacks = try { modpacksDeferred.await() } catch (e: Exception) { emptyList() }
+                    val shaders  = try { shadersDeferred.await()  } catch (e: Exception) { emptyList() }
+                    val updated  = try { updatedDeferred.await()  } catch (e: Exception) { emptyList() }
+
+                    val anyLoaded = mods.isNotEmpty() || modpacks.isNotEmpty() ||
+                            shaders.isNotEmpty() || updated.isNotEmpty()
+
+                    _uiState.value = HomeUiState(
+                        isLoading        = false,
+                        error            = if (!anyLoaded) "No internet connection." else null,
+                        trendingMods     = mods,
+                        trendingModpacks = modpacks,
+                        trendingShaders  = shaders,
+                        newlyUpdated     = updated
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.value = HomeUiState(
                     isLoading = false,
-                    error     = e.message ?: "Failed to load. Check your connection."
+                    error     = "No internet connection."
                 )
             }
         }

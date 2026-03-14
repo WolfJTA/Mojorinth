@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.modrinthforandroid.data.AppSettings
+import com.example.modrinthforandroid.ui.components.TutorialOverlay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +27,7 @@ fun SettingsScreen(
 
     var theme      by remember { mutableStateOf(settings.theme) }
     var dupWarning by remember { mutableStateOf(settings.showDuplicateWarning) }
+    var showTutorial by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -104,7 +106,37 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            // ── Help ──────────────────────────────────────────────────────
+            SettingsSection("Help") {
+                Text("App Tutorial",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface)
+                Text("Replay the first-launch walkthrough",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick  = {
+                        settings.hasSeenTutorial = false
+                        showTutorial = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("👋  Replay Tutorial")
+                }
+            }
         }
+    }
+
+    if (showTutorial) {
+        TutorialOverlay(
+            onDismiss = {
+                settings.hasSeenTutorial = true
+                showTutorial = false
+            }
+        )
     }
 }
 

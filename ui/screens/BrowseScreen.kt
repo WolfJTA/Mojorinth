@@ -152,11 +152,23 @@ fun BrowseScreen(
                     )
 
                     uiState.error != null -> Column(
-                        modifier            = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier            = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("😕 ${uiState.error}")
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("📡", style = MaterialTheme.typography.displaySmall)
+                        Text(
+                            "Can't load mods",
+                            style      = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Browsing requires an internet connection. Check your connection and try again.",
+                            style     = MaterialTheme.typography.bodySmall,
+                            color     = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(Modifier.height(4.dp))
                         Button(onClick = { viewModel.onQueryChange(query) }) { Text("Retry") }
                     }
 

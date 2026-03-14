@@ -39,6 +39,10 @@ class AppSettings private constructor(private val prefs: SharedPreferences) {
         get()  = prefs.getBoolean("show_duplicate_warning", true)
         set(v) = prefs.edit { putBoolean("show_duplicate_warning", v) }
 
+    var hasSeenTutorial: Boolean
+        get()  = prefs.getBoolean("has_seen_tutorial", false)
+        set(v) = prefs.edit { putBoolean("has_seen_tutorial", v) }
+
     // ── Instances root URI (from system folder picker) ─────────────────────
     var savedInstancesUri: String?
         get()  = prefs.getString("instances_uri", null)
