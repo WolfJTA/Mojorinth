@@ -17,9 +17,14 @@ class AppSettings private constructor(private val prefs: SharedPreferences) {
                 ).also { instance = it }
             }
 
-        const val THEME_DARK   = "dark"
-        const val THEME_LIGHT  = "light"
-        const val THEME_AMOLED = "amoled"
+        const val THEME_DARK    = "dark"
+        const val THEME_LIGHT   = "light"
+        const val THEME_AMOLED  = "amoled"
+        const val THEME_OCEAN   = "ocean"
+        const val THEME_SAKURA  = "sakura"
+        const val THEME_PURPLE  = "purple"
+        const val THEME_SUNRISE = "sunrise"
+        const val THEME_MINT    = "mint"
 
         val TYPE_FOLDER_DEFAULTS = mapOf(
             "mod"          to "mods",
