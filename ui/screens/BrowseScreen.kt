@@ -1,22 +1,28 @@
 package com.example.modrinthforandroid.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.modrinthforandroid.data.InstanceManager
+import com.example.modrinthforandroid.data.SearchHistory
 import com.example.modrinthforandroid.ui.components.FilterBottomSheet
 import com.example.modrinthforandroid.ui.components.ModCard
 import com.example.modrinthforandroid.viewmodel.BrowseFilters
@@ -41,8 +47,8 @@ fun BrowseScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val history = remember { SearchHistory.get(context) }
 
-    // Build initial filters from active instance config (if any)
     val instanceConfig = remember { InstanceManager.activeInstanceConfig }
     val initialFilters = remember(instanceConfig) {
         BrowseFilters(
@@ -52,7 +58,6 @@ fun BrowseScreen(
         )
     }
 
-    // ViewModel is keyed on projectType — initial filters are only applied once at creation
     val viewModel: BrowseViewModel = viewModel(
         key     = projectType,
         factory = BrowseViewModelFactory(projectType, initialFilters)
@@ -62,7 +67,9 @@ fun BrowseScreen(
     val query   by viewModel.query.collectAsState()
     val filters by viewModel.filters.collectAsState()
 
-    var showFilters by remember { mutableStateOf(false) }
+    var showFilters     by remember { mutableStateOf(false) }
+    var searchFocused   by remember { mutableStateOf(false) }
+    var historyEntries  by remember { mutableStateOf(history.get(projectType)) }
     val listState = rememberLazyListState()
 
     // Infinite scroll
@@ -80,7 +87,6 @@ fun BrowseScreen(
     val activeFilterCount = listOf(filters.gameVersion, filters.loader, filters.category)
         .count { it != null } + if (filters.sortIndex != "relevance") 1 else 0
 
-    // Whether current filters match what the instance suggested
     val isInstanceFiltered = instanceConfig != null &&
             filters.gameVersion == instanceConfig.mcVersion &&
             (filters.loader == instanceConfig.loaderSlug || projectType !in listOf("mod", "plugin"))
@@ -95,7 +101,6 @@ fun BrowseScreen(
                             fontWeight = FontWeight.Bold,
                             color      = MaterialTheme.colorScheme.primary
                         )
-                        // Subtitle showing instance context
                         if (isInstanceFiltered && instanceConfig != null) {
                             Text(
                                 "🎮 ${instanceConfig.summary}",
@@ -132,9 +137,65 @@ fun BrowseScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            SearchBar(query = query, onQueryChange = { viewModel.onQueryChange(it) })
+            // ── Search bar ────────────────────────────────────────────────
+            SearchBarWithHistory(
+                query       = query,
+                onQueryChange = { viewModel.onQueryChange(it) },
+                onFocusChanged = { searchFocused = it },
+                onSubmit    = {
+                    if (query.isNotBlank()) {
+                        history.add(projectType, query)
+                        historyEntries = history.get(projectType)
+                    }
+                }
+            )
 
-            // Active filter chips — includes instance badge if pre-filtered
+            // ── History chips (shown when search bar is focused + query is empty) ──
+            if (searchFocused && query.isBlank() && historyEntries.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.History, null,
+                        modifier = Modifier.size(14.dp),
+                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                    historyEntries.forEach { entry ->
+                        InputChip(
+                            selected     = false,
+                            onClick      = {
+                                viewModel.onQueryChange(entry)
+                                searchFocused = false
+                            },
+                            label        = {
+                                Text(entry, style = MaterialTheme.typography.labelSmall)
+                            },
+                            trailingIcon = {
+                                IconButton(
+                                    onClick  = {
+                                        history.remove(projectType, entry)
+                                        historyEntries = history.get(projectType)
+                                    },
+                                    modifier = Modifier.size(16.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close, "Remove",
+                                        modifier = Modifier.size(12.dp),
+                                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ── Active filter chips ───────────────────────────────────────
             if (activeFilterCount > 0) {
                 ActiveFilterChips(
                     filters          = filters,
@@ -152,23 +213,11 @@ fun BrowseScreen(
                     )
 
                     uiState.error != null -> Column(
-                        modifier            = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier            = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("📡", style = MaterialTheme.typography.displaySmall)
-                        Text(
-                            "Can't load mods",
-                            style      = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Browsing requires an internet connection. Check your connection and try again.",
-                            style     = MaterialTheme.typography.bodySmall,
-                            color     = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Spacer(Modifier.height(4.dp))
+                        Text("😕 ${uiState.error}")
+                        Spacer(modifier = Modifier.height(8.dp))
                         Button(onClick = { viewModel.onQueryChange(query) }) { Text("Retry") }
                     }
 
@@ -227,22 +276,51 @@ fun BrowseScreen(
     }
 }
 
+// ─── Search bar with focus tracking ──────────────────────────────────────────
+
 @Composable
-fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
+fun SearchBarWithHistory(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    onSubmit: () -> Unit
+) {
     OutlinedTextField(
         value         = query,
         onValueChange = onQueryChange,
         modifier      = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .onFocusChanged { onFocusChanged(it.isFocused) },
         placeholder   = { Text("Search...") },
         leadingIcon   = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon  = {
+            if (query.isNotBlank()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        Icons.Default.Close, "Clear",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+            }
+        },
         singleLine    = true,
         shape         = MaterialTheme.shapes.large,
         colors        = OutlinedTextFieldDefaults.colors(
             focusedBorderColor   = MaterialTheme.colorScheme.primary,
             unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
         )
+    )
+}
+
+// Keep the old SearchBar for any other screens that import it
+@Composable
+fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
+    SearchBarWithHistory(
+        query          = query,
+        onQueryChange  = onQueryChange,
+        onFocusChanged = {},
+        onSubmit       = {}
     )
 }
 
@@ -259,8 +337,6 @@ fun ActiveFilterChips(
             .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Show a single "instance" chip instead of separate mc/loader chips
-        // when filters match the active instance
         if (isInstanceFilter && instanceSummary != null) {
             AssistChip(
                 onClick = {},

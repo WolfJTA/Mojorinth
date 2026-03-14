@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.modrinthforandroid.data.InstanceManager
+import com.example.modrinthforandroid.ui.components.ExportModListSheet
 import com.example.modrinthforandroid.viewmodel.DisabledFilter
 import com.example.modrinthforandroid.viewmodel.InstanceFileEntry
 import com.example.modrinthforandroid.viewmodel.InstanceManagerViewModel
@@ -61,7 +62,6 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
     )
 
     val files            by viewModel.files.collectAsState()
-    val allFiles         by viewModel.availableExtensions.collectAsState()   // extension list
     val isLoading        by viewModel.isLoading.collectAsState()
     val searchQuery      by viewModel.searchQuery.collectAsState()
     val filters          by viewModel.filters.collectAsState()
@@ -70,17 +70,20 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
 
     LaunchedEffect(selectedTab) { viewModel.loadFiles(currentTab.subfolder) }
 
-    var pendingDelete    by remember { mutableStateOf<InstanceFileEntry?>(null) }
-    var showFilterSheet  by remember { mutableStateOf(false) }
+    var pendingDelete   by remember { mutableStateOf<InstanceFileEntry?>(null) }
+    var showFilterSheet by remember { mutableStateOf(false) }
+    var showExportSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Manage Instance",
+                        Text(
+                            "Manage Instance",
                             fontWeight = FontWeight.Bold,
-                            color      = MaterialTheme.colorScheme.primary)
+                            color      = MaterialTheme.colorScheme.primary
+                        )
                         Text(
                             instanceConfig?.name?.takeIf { it.isNotBlank() } ?: instanceName,
                             style = MaterialTheme.typography.labelSmall,
@@ -90,12 +93,22 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back",
-                            tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 },
                 actions = {
-                    // Filter icon with active-count badge
+                    // ── Export button ─────────────────────────────────────
+                    IconButton(onClick = { showExportSheet = true }) {
+                        Icon(
+                            Icons.Default.FileDownload, "Export mod list",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
+                    // ── Filter icon with active-count badge ───────────────
                     BadgedBox(
                         badge = {
                             if (filters.activeCount > 0) {
@@ -104,14 +117,17 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                         }
                     ) {
                         IconButton(onClick = { showFilterSheet = true }) {
-                            Icon(Icons.Default.Settings, "Filters",
+                            Icon(
+                                Icons.Default.Settings, "Filters",
                                 tint = if (filters.isActive) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onBackground)
+                                else MaterialTheme.colorScheme.onBackground
+                            )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background)
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { innerPadding ->
@@ -128,9 +144,11 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                         selected = selectedTab == i,
                         onClick  = { selectedTab = i },
                         text     = {
-                            Text("${tab.emoji} ${tab.label}",
+                            Text(
+                                "${tab.emoji} ${tab.label}",
                                 style      = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (selectedTab == i) FontWeight.Bold else FontWeight.Normal)
+                                fontWeight = if (selectedTab == i) FontWeight.Bold else FontWeight.Normal
+                            )
                         }
                     )
                 }
@@ -143,14 +161,18 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                     onValueChange = { viewModel.setSearch(it) },
                     placeholder   = { Text("Search ${currentTab.label.lowercase()}…") },
                     leadingIcon   = {
-                        Icon(Icons.Default.Search, null,
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                        Icon(
+                            Icons.Default.Search, null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
                     },
                     trailingIcon  = {
                         AnimatedVisibility(visible = searchQuery.isNotEmpty()) {
                             IconButton(onClick = { viewModel.setSearch("") }) {
-                                Icon(Icons.Default.Close, "Clear",
-                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                Icon(
+                                    Icons.Default.Close, "Clear",
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
                             }
                         }
                     },
@@ -170,7 +192,6 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                         modifier              = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Disabled chip
                         if (filters.disabledFilter != DisabledFilter.ALL) {
                             ActiveFilterChip(
                                 label    = when (filters.disabledFilter) {
@@ -181,21 +202,18 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                                 onRemove = { viewModel.setFilters(filters.copy(disabledFilter = DisabledFilter.ALL)) }
                             )
                         }
-                        // Extension chip
                         filters.extensionFilter?.let { ext ->
                             ActiveFilterChip(
                                 label    = ".$ext",
                                 onRemove = { viewModel.setFilters(filters.copy(extensionFilter = null)) }
                             )
                         }
-                        // Sort chip
                         if (!filters.sortAZ) {
                             ActiveFilterChip(
                                 label    = "Z → A",
                                 onRemove = { viewModel.setFilters(filters.copy(sortAZ = true)) }
                             )
                         }
-                        // Clear all
                         AssistChip(
                             onClick = { viewModel.resetFilters() },
                             label   = { Text("Clear all", style = MaterialTheme.typography.labelSmall) }
@@ -213,12 +231,17 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                         shape    = RoundedCornerShape(8.dp)
                     ) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, null,
+                            Icon(
+                                Icons.Default.Warning, null,
                                 tint     = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.size(16.dp))
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(Modifier.width(8.dp))
-                            Text(msg, color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                msg,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.labelMedium
+                            )
                         }
                     }
                 }
@@ -243,10 +266,12 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item {
-                            Text("${files.size} file${if (files.size != 1) "s" else ""}",
+                            Text(
+                                "${files.size} file${if (files.size != 1) "s" else ""}",
                                 style    = MaterialTheme.typography.labelSmall,
                                 color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                                modifier = Modifier.padding(bottom = 4.dp))
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
                         }
                         items(files, key = { it.uri.toString() }) { entry ->
                             FileRow(
@@ -266,14 +291,20 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
     pendingDelete?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            icon  = { Icon(Icons.Default.Delete, null,
-                tint     = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(28.dp)) },
+            icon  = {
+                Icon(
+                    Icons.Default.Delete, null,
+                    tint     = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
             title = { Text("Delete file?", fontWeight = FontWeight.Bold) },
             text  = {
-                Text("\"${entry.displayName}\" will be permanently removed. This cannot be undone.",
+                Text(
+                    "\"${entry.displayName}\" will be permanently removed. This cannot be undone.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
             },
             confirmButton = {
                 Button(
@@ -296,6 +327,11 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
             onFiltersChanged = { viewModel.setFilters(it) },
             onDismiss        = { showFilterSheet = false }
         )
+    }
+
+    // ── Export mod list sheet ─────────────────────────────────────────────────
+    if (showExportSheet) {
+        ExportModListSheet(onDismiss = { showExportSheet = false })
     }
 }
 
@@ -327,7 +363,6 @@ private fun ManageFilterSheet(
 
             Spacer(Modifier.height(20.dp))
 
-            // ── Status (disabled / enabled) — mods only ───────────────────
             if (isMods) {
                 SheetSection("Status") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -336,11 +371,14 @@ private fun ManageFilterSheet(
                                 selected = disabledFilter == option,
                                 onClick  = { disabledFilter = option },
                                 label    = {
-                                    Text(when (option) {
-                                        DisabledFilter.ALL           -> "All"
-                                        DisabledFilter.ENABLED_ONLY  -> "Enabled"
-                                        DisabledFilter.DISABLED_ONLY -> "Disabled"
-                                    }, style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        when (option) {
+                                            DisabledFilter.ALL           -> "All"
+                                            DisabledFilter.ENABLED_ONLY  -> "Enabled"
+                                            DisabledFilter.DISABLED_ONLY -> "Disabled"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
                                 }
                             )
                         }
@@ -349,7 +387,6 @@ private fun ManageFilterSheet(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ── File type (extension) ─────────────────────────────────────
             if (availableExts.isNotEmpty()) {
                 SheetSection("File Type") {
                     Row(
@@ -373,7 +410,6 @@ private fun ManageFilterSheet(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ── Sort ─────────────────────────────────────────────────────
             SheetSection("Sort") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -396,20 +432,19 @@ private fun ManageFilterSheet(
                 modifier              = Modifier.fillMaxWidth()
             ) {
                 OutlinedButton(
-                    onClick  = {
-                        onFiltersChanged(ManageFilters())
-                        onDismiss()
-                    },
+                    onClick  = { onFiltersChanged(ManageFilters()); onDismiss() },
                     modifier = Modifier.weight(1f)
                 ) { Text("Reset") }
 
                 Button(
                     onClick  = {
-                        onFiltersChanged(ManageFilters(
-                            disabledFilter  = disabledFilter,
-                            extensionFilter = extensionFilter,
-                            sortAZ          = sortAZ
-                        ))
+                        onFiltersChanged(
+                            ManageFilters(
+                                disabledFilter  = disabledFilter,
+                                extensionFilter = extensionFilter,
+                                sortAZ          = sortAZ
+                            )
+                        )
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f)
@@ -421,10 +456,12 @@ private fun ManageFilterSheet(
 
 @Composable
 private fun SheetSection(title: String, content: @Composable () -> Unit) {
-    Text(title,
+    Text(
+        title,
         style      = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.SemiBold,
-        color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        color      = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+    )
     Spacer(Modifier.height(8.dp))
     content()
 }
@@ -438,8 +475,7 @@ private fun ActiveFilterChip(label: String, onRemove: () -> Unit) {
         onClick      = onRemove,
         label        = { Text(label, style = MaterialTheme.typography.labelSmall) },
         trailingIcon = {
-            Icon(Icons.Default.Close, "Remove filter",
-                modifier = Modifier.size(14.dp))
+            Icon(Icons.Default.Close, "Remove filter", modifier = Modifier.size(14.dp))
         }
     )
 }
@@ -468,7 +504,6 @@ private fun FileRow(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Status stripe
             Box(
                 modifier = Modifier
                     .width(3.dp)
@@ -494,15 +529,24 @@ private fun FileRow(
                     else MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(2.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
                     FileExtChip(entry.extension)
                     if (entry.isDisabled) {
-                        Surface(shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)) {
-                            Text("disabled",
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        ) {
+                            Text(
+                                "disabled",
                                 modifier   = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style      = MaterialTheme.typography.labelSmall,
-                                color      = dimText, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                                color      = dimText,
+                                fontSize   = 9.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -512,17 +556,19 @@ private fun FileRow(
                 if (isMods) {
                     IconButton(onClick = onToggle, modifier = Modifier.size(36.dp)) {
                         Icon(
-                            imageVector = if (entry.isDisabled) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            imageVector        = if (entry.isDisabled) Icons.Default.PlayArrow else Icons.Default.Pause,
                             contentDescription = if (entry.isDisabled) "Enable" else "Disable",
-                            tint     = if (entry.isDisabled) green else dimText,
-                            modifier = Modifier.size(18.dp)
+                            tint               = if (entry.isDisabled) green else dimText,
+                            modifier           = Modifier.size(18.dp)
                         )
                     }
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Delete, "Delete",
+                    Icon(
+                        Icons.Default.Delete, "Delete",
                         tint     = MaterialTheme.colorScheme.error.copy(alpha = 0.75f),
-                        modifier = Modifier.size(18.dp))
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }
@@ -541,10 +587,14 @@ private fun FileExtChip(ext: String) {
         else       -> MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) to MaterialTheme.colorScheme.primary
     }
     Surface(shape = RoundedCornerShape(4.dp), color = bg) {
-        Text(".${ext.take(10)}",
+        Text(
+            ".${ext.take(10)}",
             modifier   = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
             style      = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold, color = fg, fontSize = 9.sp)
+            fontWeight = FontWeight.Bold,
+            color      = fg,
+            fontSize   = 9.sp
+        )
     }
 }
 
@@ -553,29 +603,49 @@ private fun FileExtChip(ext: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NoInstancePlaceholder(onBack: () -> Unit) {
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text("Manage Instance", fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary) },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back",
-                        tint = MaterialTheme.colorScheme.onBackground)
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-        )
-    }) { innerPadding ->
-        Box(Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement   = Arrangement.spacedBy(12.dp),
-                modifier              = Modifier.padding(32.dp)) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "Manage Instance",
+                        fontWeight = FontWeight.Bold,
+                        color      = MaterialTheme.colorScheme.primary
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        }
+    ) { innerPadding ->
+        Box(
+            Modifier.fillMaxSize().padding(innerPadding),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier            = Modifier.padding(32.dp)
+            ) {
                 Text("📦", fontSize = 48.sp)
-                Text("No Active Instance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Select an instance from the home screen first.",
+                Text("No Active Instance",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold)
+                Text(
+                    "Select an instance from the home screen first.",
                     style     = MaterialTheme.typography.bodyMedium,
                     color     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    textAlign = TextAlign.Center)
+                    textAlign = TextAlign.Center
+                )
                 OutlinedButton(onClick = onBack) { Text("Go Back") }
             }
         }
@@ -584,17 +654,23 @@ private fun NoInstancePlaceholder(onBack: () -> Unit) {
 
 @Composable
 private fun EmptyPlaceholder(tab: ManagerTab, filtered: Boolean, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(32.dp),
+    Column(
+        modifier            = modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Text(if (filtered) "🔍" else tab.emoji, fontSize = 40.sp)
-        Text(if (filtered) "No matches" else "No ${tab.label} Found",
-            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            if (filtered) "No matches" else "No ${tab.label} Found",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
         Text(
             if (filtered) "Try adjusting your search or filters."
             else "The ${tab.subfolder}/ folder is empty or doesn't exist yet.",
             style     = MaterialTheme.typography.bodySmall,
             color     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            textAlign = TextAlign.Center)
+            textAlign = TextAlign.Center
+        )
     }
 }

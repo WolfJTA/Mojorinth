@@ -17,8 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,6 +33,7 @@ import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.data.model.SearchResult
+import com.example.modrinthforandroid.ui.components.ExportModListSheet
 import com.example.modrinthforandroid.ui.components.TutorialOverlay
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.HomeUiState
@@ -75,13 +78,21 @@ fun HomeScreen(
     }
 
     var showNoInstanceDialog by remember { mutableStateOf(false) }
+    var showExportSheet      by remember { mutableStateOf(false) }
 
     // ── Drawer state ──────────────────────────────────────────────────────────
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope       = rememberCoroutineScope()
+    val density     = LocalDensity.current
+
+    // How wide the touch zone is from the left edge (in px)
+    val edgeZonePx  = with(density) { 32.dp.toPx() }
+    // How far you need to drag right to trigger open (in px)
+    val swipeThresholdPx = with(density) { 40.dp.toPx() }
 
     ModalNavigationDrawer(
-        drawerState   = drawerState,
+        drawerState    = drawerState,
+        gesturesEnabled = false,  // disable built-in (too strict), we handle it ourselves
         drawerContent = {
             AppDrawer(
                 activeInstance   = activeInstance,
@@ -106,11 +117,46 @@ fun HomeScreen(
                         context.startActivity(intent)
                     }
                 },
+                onExport         = {
+                    scope.launch { drawerState.close() }
+                    if (activeInstance != null) showExportSheet = true
+                    else showNoInstanceDialog = true
+                },
                 onClose          = { scope.launch { drawerState.close() } }
             )
         }
     ) {
         Scaffold(
+            modifier = Modifier.pointerInput(drawerState) {
+                var startX = 0f
+                var startY = 0f
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitPointerEvent()
+                        val pos  = down.changes.firstOrNull()?.position ?: continue
+                        // Only care about touches that start near the left edge
+                        if (pos.x > edgeZonePx) continue
+                        startX = pos.x
+                        startY = pos.y
+
+                        // Track until finger lifts
+                        var deltaX = 0f
+                        var deltaY = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            deltaX = change.position.x - startX
+                            deltaY = change.position.y - startY
+                            if (!change.pressed) break
+                        }
+
+                        // Open if swiped right far enough and not mostly vertical
+                        if (deltaX > swipeThresholdPx && kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY)) {
+                            scope.launch { drawerState.open() }
+                        }
+                    }
+                }
+            },
             topBar = {
                 TopAppBar(
                     title = {
@@ -227,6 +273,25 @@ fun HomeScreen(
         )
     }
 
+    // ── Mojo Launcher not installed warning ───────────────────────────────────
+    if (showMojoWarning) {
+        AlertDialog(
+            onDismissRequest = { showMojoWarning = false },
+            icon             = { Text("⚠️", fontSize = 32.sp) },
+            title            = { Text("Mojo Launcher Not Found", fontWeight = FontWeight.Bold) },
+            text             = {
+                Text(
+                    "Mojorinth is designed to work alongside Mojo Launcher — without it, you won't be able to manage instances or download mods directly to your game.\n\nYou can still browse Modrinth content, but most of the app's features won't do much until Mojo Launcher is installed.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                )
+            },
+            confirmButton = {
+                Button(onClick = { showMojoWarning = false }) { Text("Got it") }
+            }
+        )
+    }
+
     // ── Tutorial overlay ──────────────────────────────────────────────────────
     if (showTutorial) {
         TutorialOverlay(
@@ -235,6 +300,11 @@ fun HomeScreen(
                 showTutorial = false
             }
         )
+    }
+
+    // ── Export mod list sheet ─────────────────────────────────────────────────
+    if (showExportSheet) {
+        ExportModListSheet(onDismiss = { showExportSheet = false })
     }
 }
 
@@ -247,6 +317,7 @@ private fun AppDrawer(
     onManageInstance: () -> Unit,
     onSettingsClick: () -> Unit,
     onLaunchMojo: () -> Unit,
+    onExport: () -> Unit,
     onClose: () -> Unit
 ) {
     ModalDrawerSheet(
@@ -321,6 +392,14 @@ private fun AppDrawer(
             icon    = Icons.Default.PlayArrow,
             label   = "Open Mojo Launcher",
             onClick = onLaunchMojo
+        )
+
+        DrawerNavItem(
+            icon    = Icons.Default.FileDownload,
+            label   = "Export Mod List",
+            enabled = activeInstance != null,
+            hint    = if (activeInstance == null) "Select an instance first" else null,
+            onClick = onExport
         )
 
         DrawerNavItem(
