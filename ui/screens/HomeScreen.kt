@@ -2,6 +2,10 @@ package com.example.modrinthforandroid.ui.screens
 
 import android.content.Intent
 import android.provider.OpenableColumns
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -19,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -26,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +39,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstallProgress
@@ -41,6 +48,7 @@ import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.data.MrpackInstaller
 import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.ExportModListSheet
+import com.example.modrinthforandroid.ui.components.MojorinthLoadingSpinner
 import com.example.modrinthforandroid.ui.components.TutorialOverlay
 import com.example.modrinthforandroid.ui.components.formatNumber
 import com.example.modrinthforandroid.viewmodel.HomeUiState
@@ -289,25 +297,19 @@ fun HomeScreen(
             }
         ) { innerPadding ->
             when {
-                uiState.isLoading -> Box(
-                    Modifier.fillMaxSize().padding(innerPadding),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
+                uiState.isLoading -> MojorinthSplash(innerPadding = innerPadding)
 
-                uiState.error != null -> Box(
-                    Modifier.fillMaxSize().padding(innerPadding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "😕 ${uiState.error}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Button(onClick = { viewModel.refresh() }) { Text("Retry") }
-                    }
-                }
+                uiState.error != null -> OfflineScreen(
+                    innerPadding     = innerPadding,
+                    onRetry          = { viewModel.refresh() },
+                    onManageInstance = onManageInstance,
+                    onSearchClick    = onSearchClick,
+                    onDownloadsClick = onDownloadsClick,
+                    onImportMrpack   = { if (InstanceManager.rootUri != null) mrpackFilePicker.launch(arrayOf("*/*")) else showNoInstanceDialog = true },
+                    onSettingsClick  = onSettingsClick,
+                    activeInstance   = activeInstance,
+                    onNoInstance     = { showNoInstanceDialog = true }
+                )
 
                 else -> HomeContent(
                     uiState          = uiState,
@@ -713,6 +715,206 @@ private fun DrawerNavItem(
         onClick  = { if (enabled) onClick() },
         modifier = Modifier.padding(horizontal = 12.dp)
     )
+}
+
+// ─── Animated splash (shown while loading) ────────────────────────────────────
+
+@Composable
+private fun MojorinthSplash(innerPadding: PaddingValues) {
+    val infiniteTransition = rememberInfiniteTransition(label = "splash")
+    val labelAlpha by infiniteTransition.animateFloat(
+        initialValue  = 0.4f,
+        targetValue   = 1f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "labelAlpha"
+    )
+
+    Box(
+        Modifier.fillMaxSize().padding(innerPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            MojorinthLoadingSpinner(size = 80.dp)
+            Text(
+                "Mojorinth",
+                fontWeight = FontWeight.Black,
+                fontSize   = 22.sp,
+                color      = MaterialTheme.colorScheme.onBackground.copy(alpha = labelAlpha)
+            )
+        }
+    }
+}
+
+// ─── Offline screen ───────────────────────────────────────────────────────────
+
+@Composable
+private fun OfflineScreen(
+    innerPadding: PaddingValues,
+    onRetry: () -> Unit,
+    onManageInstance: () -> Unit,
+    onSearchClick: () -> Unit,
+    onDownloadsClick: () -> Unit,
+    onImportMrpack: () -> Unit,
+    onSettingsClick: () -> Unit,
+    activeInstance: String?,
+    onNoInstance: () -> Unit
+) {
+    val context = LocalContext.current
+    val primary = MaterialTheme.colorScheme.primary
+
+    Box(
+        Modifier.fillMaxSize().padding(innerPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier            = Modifier.padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("📡", fontSize = 52.sp)
+            Text(
+                "No Internet Connection",
+                style      = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color      = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                "Browsing Modrinth needs a connection, but you can still do plenty offline.",
+                style     = MaterialTheme.typography.bodySmall,
+                color     = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            // ── You can still… card ───────────────────────────────────────
+            Surface(
+                shape          = RoundedCornerShape(16.dp),
+                color          = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                tonalElevation = 2.dp,
+                modifier       = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier            = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "You can still:",
+                        style      = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color      = primary
+                    )
+
+                    OfflineAction(
+                        emoji    = "▶️",
+                        label    = "Open Mojo Launcher",
+                        sublabel = "Launch the game",
+                        enabled  = true,
+                        onClick  = {
+                            val intent = context.packageManager
+                                .getLaunchIntentForPackage("git.artdeell.mojo")
+                            if (intent != null) context.startActivity(intent)
+                        }
+                    )
+
+                    OfflineAction(
+                        emoji    = "📤",
+                        label    = "Export Mod List",
+                        sublabel = if (activeInstance != null) activeInstance else "Select an instance first",
+                        enabled  = activeInstance != null,
+                        onClick  = { if (activeInstance != null) onManageInstance() else onNoInstance() }
+                    )
+
+                    OfflineAction(
+                        emoji    = "🗂️",
+                        label    = "Import .mrpack",
+                        sublabel = "Install a modpack from local storage",
+                        enabled  = true,
+                        onClick  = onImportMrpack
+                    )
+
+                    OfflineAction(
+                        emoji    = "📦",
+                        label    = "Manage Instance",
+                        sublabel = if (activeInstance != null) activeInstance else "Select an instance first",
+                        enabled  = activeInstance != null,
+                        onClick  = { if (activeInstance != null) onManageInstance() else onNoInstance() }
+                    )
+
+                    OfflineAction(
+                        emoji    = "⚙️",
+                        label    = "Change Settings",
+                        sublabel = "Theme, folders, and more",
+                        enabled  = true,
+                        onClick  = onSettingsClick
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Button(
+                onClick  = onRetry,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Retry")
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineAction(
+    emoji: String,
+    label: String,
+    sublabel: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick  = onClick,
+        enabled  = enabled,
+        shape    = RoundedCornerShape(10.dp),
+        color    = MaterialTheme.colorScheme.surface.copy(alpha = if (enabled) 1f else 0.5f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier          = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(emoji, fontSize = 22.sp)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style      = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color      = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+                Text(
+                    sublabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.55f else 0.3f)
+                )
+            }
+            if (enabled) {
+                Icon(
+                    Icons.Default.ChevronRight, null,
+                    tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
 }
 
 // ─── Main content ─────────────────────────────────────────────────────────────
