@@ -1,13 +1,17 @@
 package com.example.modrinthforandroid.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
@@ -22,7 +26,8 @@ data class InstallProgress(
 data class InstallResult(
     val instanceName: String,
     val modsInstalled: Int,
-    val modsFailed: List<String>
+    val modsFailed: List<String>,
+    val rendererPatched: Boolean = false   // true when LTW safeguard fired
 )
 
 // ─── Installer ────────────────────────────────────────────────────────────────
@@ -59,12 +64,13 @@ object MrpackInstaller {
         instanceName: String,
         mrpackUrl: String,
         iconUrl: String? = null,
+        mrpackBytes: ByteArray? = null,   // pass pre-read bytes to skip the download step
         onProgress: (InstallProgress) -> Unit
     ): InstallResult = withContext(Dispatchers.IO) {
 
-        // ── 1. Download .mrpack bytes ─────────────────────────────────────
+        // ── 1. Obtain .mrpack bytes ───────────────────────────────────────
         onProgress(InstallProgress("Downloading modpack…"))
-        val mrpackBytes = http.newCall(Request.Builder().url(mrpackUrl).build())
+        val mrpackBytes = mrpackBytes ?: http.newCall(Request.Builder().url(mrpackUrl).build())
             .execute().use { resp ->
                 if (!resp.isSuccessful) error("Failed to download .mrpack (HTTP ${resp.code})")
                 resp.body?.bytes() ?: error("Empty .mrpack response")
@@ -76,6 +82,7 @@ object MrpackInstaller {
         var index: JSONObject? = null
         // filename → bytes for anything sitting in overrides/mods/
         val embeddedMods = mutableMapOf<String, ByteArray>()
+        var iconBytes: ByteArray? = null
 
         ZipInputStream(mrpackBytes.inputStream()).use { zis ->
             var entry = zis.nextEntry
@@ -92,6 +99,17 @@ object MrpackInstaller {
                             embeddedMods[filename] = zis.readBytes()
                         }
                     }
+                    // Extract bundled icon — check common mrpack icon locations
+                    !entry.isDirectory && (
+                            entry.name == "icon.png"  ||
+                                    entry.name == "icon.webp" ||
+                                    entry.name == "icon.jpg"  ||
+                                    entry.name == "icon.jpeg" ||
+                                    entry.name.equals("icon.png",  ignoreCase = true) ||
+                                    entry.name.equals("icon.webp", ignoreCase = true)
+                            ) -> {
+                        iconBytes = zis.readBytes()
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry
@@ -99,6 +117,9 @@ object MrpackInstaller {
         }
 
         val idx = index ?: error("modrinth.index.json not found in .mrpack")
+
+        // Use the pack's own name from the index; fall back to caller-supplied name
+        val packName = idx.optString("name", "").trim().ifBlank { instanceName }
 
         // ── 3. Parse loader metadata ──────────────────────────────────────
         // versionId = the PACK's version number (e.g. "0.0.1") — NOT the MC version
@@ -142,7 +163,7 @@ object MrpackInstaller {
         val rootDoc = DocumentFile.fromTreeUri(context, rootUri)
             ?: error("Cannot open profiles root folder")
 
-        val safeName = instanceName
+        val safeName = packName
             .replace(Regex("[/\\\\:*?\"<>|]"), "_")
             .trim()
             .ifBlank { "New_Modpack" }
@@ -155,8 +176,8 @@ object MrpackInstaller {
         onProgress(InstallProgress("Writing instance config…"))
         val mojoConfig = JSONObject().apply {
             put("argsMode",        0)
-            put("icon",            "default")
-            put("name",            instanceName)
+            put("icon",            if (iconBytes != null || !iconUrl.isNullOrBlank()) "icon" else "default")
+            put("name",            packName)
             put("renderer",        "vulkan_zink")
             put("selectedRuntime", "Internal-21")
             put("sharedData",      false)
@@ -169,19 +190,29 @@ object MrpackInstaller {
             out.write(mojoConfig.toByteArray(Charsets.UTF_8))
         } ?: error("Could not write mojo_instance.json")
 
-        // ── 7. Download icon.webp ─────────────────────────────────────────
-        if (!iconUrl.isNullOrBlank()) {
-            try {
+        // ── 7. Write icon.webp ────────────────────────────────────────────
+        // Source priority: (a) icon bundled inside the .mrpack zip,
+        //                  (b) remote iconUrl passed by the caller.
+        // Mojo Launcher always looks for "icon.webp" regardless of original format.
+        val iconBytesToWrite: ByteArray? = when {
+            iconBytes != null -> toWebP(iconBytes)
+            !iconUrl.isNullOrBlank() -> try {
                 onProgress(InstallProgress("Downloading icon…"))
-                val iconBytes = http.newCall(Request.Builder().url(iconUrl).build())
+                val raw = http.newCall(Request.Builder().url(iconUrl).build())
                     .execute().use { resp ->
                         if (resp.isSuccessful) resp.body?.bytes() else null
                     }
-                if (iconBytes != null) {
-                    val iconFile = instanceDir.createFile("image/webp", "icon.webp")
-                    iconFile?.let { f ->
-                        context.contentResolver.openOutputStream(f.uri)?.use { it.write(iconBytes) }
-                    }
+                raw?.let { toWebP(it) } ?: raw
+            } catch (_: Exception) { null }
+            else -> null
+        }
+        if (iconBytesToWrite != null) {
+            try {
+                // Use octet-stream so SAF doesn't append or mangle the extension.
+                // The filename "icon.webp" must be exact — Mojo Launcher hardcodes it.
+                val iconFile = instanceDir.createFile("application/octet-stream", "icon.webp")
+                iconFile?.let { f ->
+                    context.contentResolver.openOutputStream(f.uri)?.use { it.write(iconBytesToWrite) }
                 }
             } catch (_: Exception) {
                 // Icon is non-critical — silently skip if it fails
@@ -246,10 +277,45 @@ object MrpackInstaller {
 
         onProgress(InstallProgress("Done!", totalMods, totalMods))
 
+        // ── 8. LTW renderer safeguard ─────────────────────────────────────
+        // If the modpack contains Sodium, Iris, or Indium the default
+        // vulkan_zink renderer will break the game.  Detect by filename and
+        // patch mojo_instance.json to opengles3_ltw automatically.
+        val ltwTriggerPatterns = listOf("sodium", "iris", "indium")
+        val allModFilenames = (remoteMods.map { it.filename } + embeddedMods.keys)
+            .map { it.lowercase() }
+        val needsLtw = allModFilenames.any { name ->
+            ltwTriggerPatterns.any { trigger -> name.contains(trigger) }
+        }
+
+        if (needsLtw) {
+            try {
+                onProgress(InstallProgress("Applying LTW renderer safeguard…"))
+                val instanceDir2 = DocumentFile.fromTreeUri(context, rootUri)
+                    ?.findFile(finalName)
+                val configFile2  = instanceDir2?.findFile("mojo_instance.json")
+                if (configFile2 != null) {
+                    val rawJson = context.contentResolver
+                        .openInputStream(configFile2.uri)?.use { it.bufferedReader().readText() }
+                    if (rawJson != null) {
+                        val patched = JSONObject(rawJson)
+                        patched.put("renderer", "opengles3_ltw")
+                        context.contentResolver
+                            .openOutputStream(configFile2.uri, "wt")?.use { out ->
+                                out.write(patched.toString(2).toByteArray(Charsets.UTF_8))
+                            }
+                    }
+                }
+            } catch (_: Exception) {
+                // Non-fatal — renderer can be changed manually in Mojo Launcher
+            }
+        }
+
         InstallResult(
-            instanceName  = finalName,
-            modsInstalled = totalMods - failed.size,
-            modsFailed    = failed
+            instanceName    = finalName,
+            modsInstalled   = totalMods - failed.size,
+            modsFailed      = failed,
+            rendererPatched = needsLtw
         )
     }
 
@@ -260,5 +326,22 @@ object MrpackInstaller {
         var i = 2
         while (parent.findFile("$desired ($i)") != null) i++
         return "$desired ($i)"
+    }
+
+    /**
+     * Decodes [bytes] as any image format and re-encodes as WebP.
+     * Returns null if decoding fails (bytes aren't a valid image).
+     */
+    private fun toWebP(bytes: ByteArray): ByteArray? {
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val out = ByteArrayOutputStream()
+        @Suppress("DEPRECATION")
+        val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            Bitmap.CompressFormat.WEBP_LOSSLESS
+        else
+            Bitmap.CompressFormat.WEBP
+        bitmap.compress(format, 100, out)
+        bitmap.recycle()
+        return out.toByteArray()
     }
 }

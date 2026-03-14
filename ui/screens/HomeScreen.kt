@@ -1,5 +1,9 @@
 package com.example.modrinthforandroid.ui.screens
 
+import android.content.Intent
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -31,7 +35,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.modrinthforandroid.data.AppSettings
+import com.example.modrinthforandroid.data.InstallProgress
+import com.example.modrinthforandroid.data.InstallResult
 import com.example.modrinthforandroid.data.InstanceManager
+import com.example.modrinthforandroid.data.MrpackInstaller
 import com.example.modrinthforandroid.data.model.SearchResult
 import com.example.modrinthforandroid.ui.components.ExportModListSheet
 import com.example.modrinthforandroid.ui.components.TutorialOverlay
@@ -85,6 +92,58 @@ fun HomeScreen(
     val scope       = rememberCoroutineScope()
     val density     = LocalDensity.current
 
+    // ── Local .mrpack import state ────────────────────────────────────────────
+    // Three phases: idle → installing (progress) → done/error (result dialog)
+    var importProgress  by remember { mutableStateOf<InstallProgress?>(null) }
+    var importResult    by remember { mutableStateOf<InstallResult?>(null) }
+    var importError     by remember { mutableStateOf<String?>(null) }
+
+    val mrpackFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val rootUri = InstanceManager.rootUri ?: return@rememberLauncherForActivityResult
+
+        // Ask Android for the real display name of the file via ContentResolver.
+        // uri.lastPathSegment gives raw document IDs on content:// URIs, not filenames.
+        val displayName = context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+            ?.removeSuffix(".mrpack")
+            ?.replace('_', ' ')
+            ?.replace('-', ' ')
+            ?.trim()
+            ?: "Imported Pack"
+
+        scope.launch {
+            importProgress = InstallProgress("Starting import…")
+            importResult   = null
+            importError    = null
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Cannot read selected file")
+
+                val result = MrpackInstaller.install(
+                    context      = context,
+                    rootUri      = rootUri,
+                    instanceName = displayName,
+                    mrpackUrl    = "",          // unused when mrpackBytes is provided
+                    mrpackBytes  = bytes,
+                    iconUrl      = null,
+                    onProgress   = { importProgress = it }
+                )
+                importResult   = result
+                importProgress = null
+                activeInstance = InstanceManager.activeInstanceName
+            } catch (e: Exception) {
+                importError    = e.message ?: "Unknown error"
+                importProgress = null
+            }
+        }
+    }
+
     // How wide the touch zone is from the left edge (in px)
     val edgeZonePx  = with(density) { 32.dp.toPx() }
     // How far you need to drag right to trigger open (in px)
@@ -121,6 +180,14 @@ fun HomeScreen(
                     scope.launch { drawerState.close() }
                     if (activeInstance != null) showExportSheet = true
                     else showNoInstanceDialog = true
+                },
+                onImportMrpack   = {
+                    scope.launch { drawerState.close() }
+                    if (InstanceManager.rootUri != null) {
+                        mrpackFilePicker.launch(arrayOf("*/*"))
+                    } else {
+                        showNoInstanceDialog = true
+                    }
                 },
                 onClose          = { scope.launch { drawerState.close() } }
             )
@@ -302,6 +369,154 @@ fun HomeScreen(
         )
     }
 
+    // ── .mrpack import — progress dialog ─────────────────────────────────────
+    importProgress?.let { prog ->
+        AlertDialog(
+            onDismissRequest = { /* not dismissible while installing */ },
+            icon  = { Text("📦", fontSize = 32.sp) },
+            title = { Text("Importing Modpack…", fontWeight = FontWeight.Bold) },
+            text  = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (prog.total > 0) {
+                        LinearProgressIndicator(
+                            progress    = { prog.done.toFloat() / prog.total },
+                            modifier    = Modifier.fillMaxWidth(),
+                            color       = MaterialTheme.colorScheme.primary,
+                            trackColor  = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        Text(
+                            "${prog.done} / ${prog.total}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier   = Modifier.fillMaxWidth(),
+                            color      = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                    Text(
+                        prog.step,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    // ── .mrpack import — result dialog ────────────────────────────────────────
+    importResult?.let { res ->
+        AlertDialog(
+            onDismissRequest = { importResult = null },
+            icon  = { Text("✅", fontSize = 32.sp) },
+            title = { Text("Import Complete!", fontWeight = FontWeight.Bold) },
+            text  = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "\"${res.instanceName}\" is ready.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "${res.modsInstalled} mod${if (res.modsInstalled != 1) "s" else ""} installed" +
+                                if (res.modsFailed.isNotEmpty()) ", ${res.modsFailed.size} skipped" else "",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                    )
+                    if (res.rendererPatched) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        ) {
+                            Row(
+                                modifier          = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("🛡️", fontSize = 16.sp)
+                                Text(
+                                    "Renderer switched to LTW — Sodium/Iris detected.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "Both apps need a restart to see the new instance.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+            },
+            confirmButton = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Button(
+                        onClick = {
+                            importResult = null
+                            val intent = context.packageManager
+                                .getLaunchIntentForPackage("git.artdeell.mojo")
+                                ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                                        Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (intent != null) context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Restart Mojo Launcher")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val intent = context.packageManager
+                                .getLaunchIntentForPackage(context.packageName)
+                                ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                                        Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (intent != null) context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Restart Mojorinth")
+                    }
+                    OutlinedButton(
+                        onClick  = { importResult = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Done") }
+                }
+            },
+            dismissButton = null
+        )
+    }
+
+    // ── .mrpack import — error dialog ─────────────────────────────────────────
+    importError?.let { err ->
+        AlertDialog(
+            onDismissRequest = { importError = null },
+            icon  = { Text("❌", fontSize = 32.sp) },
+            title = { Text("Import Failed", fontWeight = FontWeight.Bold) },
+            text  = {
+                Text(
+                    err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                )
+            },
+            confirmButton = {
+                Button(onClick = { importError = null }) { Text("OK") }
+            }
+        )
+    }
+
     // ── Export mod list sheet ─────────────────────────────────────────────────
     if (showExportSheet) {
         ExportModListSheet(onDismiss = { showExportSheet = false })
@@ -318,6 +533,7 @@ private fun AppDrawer(
     onSettingsClick: () -> Unit,
     onLaunchMojo: () -> Unit,
     onExport: () -> Unit,
+    onImportMrpack: () -> Unit,
     onClose: () -> Unit
 ) {
     ModalDrawerSheet(
@@ -400,6 +616,12 @@ private fun AppDrawer(
             enabled = activeInstance != null,
             hint    = if (activeInstance == null) "Select an instance first" else null,
             onClick = onExport
+        )
+
+        DrawerNavItem(
+            icon    = Icons.Default.FolderOpen,
+            label   = "Import .mrpack",
+            onClick = onImportMrpack
         )
 
         DrawerNavItem(

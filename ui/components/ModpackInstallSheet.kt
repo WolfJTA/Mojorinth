@@ -348,17 +348,49 @@ fun ModpackInstallSheet(
                             }
                         }
 
+                        // LTW renderer safeguard notice
+                        if (res.rendererPatched) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            ) {
+                                Row(
+                                    modifier          = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text("🛡️", fontSize = 20.sp)
+                                    Column {
+                                        Text(
+                                            "Renderer set to LTW (GL4ES)",
+                                            style      = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color      = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        Text(
+                                            "Sodium / Iris detected — switched from Vulkan (Zink) to OpenGL ES 3 + LTW so the pack works correctly.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Text(
-                            "Open Mojo Launcher, select the \"${res.instanceName}\" instance, and hit Play!",
+                            "Both apps need a restart to see the new instance.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
 
-                        // Open Mojo Launcher button
+                        // Restart Mojo Launcher
                         Button(
                             onClick  = {
-                                val pm     = context.packageManager
+                                val pm = context.packageManager
                                 val intent = pm.getLaunchIntentForPackage("git.artdeell.mojo")
+                                    ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
                                 if (intent != null) context.startActivity(intent)
                                 onDismiss()
                             },
@@ -366,7 +398,22 @@ fun ModpackInstallSheet(
                         ) {
                             Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Open Mojo Launcher")
+                            Text("Restart Mojo Launcher")
+                        }
+
+                        // Restart Mojorinth
+                        OutlinedButton(
+                            onClick = {
+                                val pm = context.packageManager
+                                val intent = pm.getLaunchIntentForPackage(context.packageName)
+                                    ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                if (intent != null) context.startActivity(intent)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Restart Mojorinth")
                         }
 
                         OutlinedButton(
