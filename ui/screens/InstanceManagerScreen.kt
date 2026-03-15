@@ -77,6 +77,7 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
     LaunchedEffect(selectedTab) { viewModel.loadFiles(currentTab.subfolder) }
 
     var pendingDelete   by remember { mutableStateOf<InstanceFileEntry?>(null) }
+    var pendingToggle   by remember { mutableStateOf<InstanceFileEntry?>(null) }
     var showFilterSheet by remember { mutableStateOf(false) }
     var showExportSheet by remember { mutableStateOf(false) }
 
@@ -277,10 +278,10 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                             )
                         }
                         items(files, key = { it.uri.toString() }) { entry ->
-                            FileRow(
+                            SwipeableFileRow(
                                 entry    = entry,
                                 isMods   = currentTab.subfolder == "mods",
-                                onToggle = { viewModel.toggleDisabled(entry) },
+                                onToggle = { pendingToggle = entry },
                                 onDelete = { pendingDelete = entry }
                             )
                         }
@@ -288,6 +289,45 @@ fun InstanceManagerScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    // ── Toggle confirmation ───────────────────────────────────────────────────
+    pendingToggle?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingToggle = null },
+            icon = {
+                Icon(
+                    if (entry.isDisabled) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    null,
+                    tint     = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    if (entry.isDisabled) "Enable file?" else "Disable file?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    if (entry.isDisabled)
+                        "\"${entry.displayName}\" will be re-enabled."
+                    else
+                        "\"${entry.displayName}\" will be disabled and won't load in-game.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.toggleDisabled(entry); pendingToggle = null }) {
+                    Text(if (entry.isDisabled) "Enable" else "Disable")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { pendingToggle = null }) { Text("Cancel") }
+            }
+        )
     }
 
     // ── Delete confirmation ───────────────────────────────────────────────────
@@ -481,6 +521,93 @@ private fun ActiveFilterChip(label: String, onRemove: () -> Unit) {
             Icon(Icons.Default.Close, "Remove filter", modifier = Modifier.size(14.dp))
         }
     )
+}
+
+// ─── Swipeable file row ───────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableFileRow(
+    entry: InstanceFileEntry,
+    isMods: Boolean,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.EndToStart -> { onDelete(); false }  // left swipe → delete
+                SwipeToDismissBoxValue.StartToEnd -> {                      // right swipe → toggle
+                    if (isMods) { onToggle(); false } else false
+                }
+                else -> false
+            }
+        },
+        positionalThreshold = { it * 0.35f }  // 35% of width to trigger
+    )
+
+    SwipeToDismissBox(
+        state            = dismissState,
+        enableDismissFromStartToEnd = isMods,   // only enable right-swipe for mods
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            val isDelete  = direction == SwipeToDismissBoxValue.EndToStart
+            val isToggle  = direction == SwipeToDismissBoxValue.StartToEnd
+
+            val bgColor = when {
+                isDelete -> MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                isToggle -> if (entry.isDisabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                else Color(0xFFFF9800).copy(alpha = 0.85f)
+                else     -> Color.Transparent
+            }
+
+            val icon = when {
+                isDelete -> Icons.Default.Delete
+                isToggle -> if (entry.isDisabled) Icons.Default.PlayArrow else Icons.Default.Pause
+                else     -> null
+            }
+
+            val label = when {
+                isDelete -> "Delete"
+                isToggle -> if (entry.isDisabled) "Enable" else "Disable"
+                else     -> ""
+            }
+
+            Box(
+                modifier          = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(bgColor)
+                    .padding(horizontal = 20.dp),
+                contentAlignment  = if (isDelete) Alignment.CenterEnd else Alignment.CenterStart
+            ) {
+                if (icon != null) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            icon, null,
+                            tint     = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            label,
+                            color      = Color.White,
+                            fontSize   = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    ) {
+        FileRow(
+            entry    = entry,
+            isMods   = isMods,
+            onToggle = onToggle,
+            onDelete = onDelete
+        )
+    }
 }
 
 // ─── File row ─────────────────────────────────────────────────────────────────

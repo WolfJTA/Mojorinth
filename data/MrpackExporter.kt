@@ -21,7 +21,9 @@ data class ExportResult(
     val outputUri: Uri,
     val totalMods: Int,
     val resolvedMods: Int,
-    val skippedMods: List<String>   // filenames that couldn't be resolved
+    val skippedMods: List<String>,
+    val shadersExported: Int = 0,
+    val resourcePacksExported: Int = 0
 )
 
 // ─── Exporter ─────────────────────────────────────────────────────────────────
@@ -49,25 +51,38 @@ object MrpackExporter {
         outputUri: Uri
     ): ExportResult = withContext(Dispatchers.IO) {
 
-        // ── 1. Collect jar files from mods/ ───────────────────────────────
+        // ── 1. Collect files ──────────────────────────────────────────────
         val rootDoc     = DocumentFile.fromTreeUri(context, rootUri)
             ?: error("Cannot open root URI")
         val instanceDoc = rootDoc.findFile(instanceName)
             ?: error("Instance folder '$instanceName' not found")
-        val modsDir     = instanceDoc.findFile("mods")
-            ?: error("No mods/ folder in instance '$instanceName'")
 
-        val jarFiles = modsDir.listFiles()
-            .filter { it.isFile }
-            .filter { name ->
-                val n = name.name ?: ""
-                (n.endsWith(".jar", ignoreCase = true)) &&
+        // Mods — resolve via Modrinth hash API
+        val modsDir  = instanceDoc.findFile("mods")
+        val jarFiles = modsDir?.listFiles()
+            ?.filter { it.isFile }
+            ?.filter { doc ->
+                val n = doc.name ?: ""
+                n.endsWith(".jar", ignoreCase = true) &&
                         !n.endsWith(".disabled", ignoreCase = true)
-            }
+            } ?: emptyList()
 
-        if (jarFiles.isEmpty()) error("No enabled .jar files found in mods/")
+        // Shaders + resource packs — bundled as overrides (zips, not resolvable by hash)
+        data class OverrideFile(val doc: DocumentFile, val zipPath: String)
+        val overrideFiles = mutableListOf<OverrideFile>()
 
-        // ── 2. SHA-512 hash every file ────────────────────────────────────
+        instanceDoc.findFile("shaderpacks")?.listFiles()
+            ?.filter { it.isFile }
+            ?.forEach { overrideFiles += OverrideFile(it, "overrides/shaderpacks/${it.name}") }
+
+        instanceDoc.findFile("resourcepacks")?.listFiles()
+            ?.filter { it.isFile }
+            ?.forEach { overrideFiles += OverrideFile(it, "overrides/resourcepacks/${it.name}") }
+
+        if (jarFiles.isEmpty() && overrideFiles.isEmpty())
+            error("Nothing to export — no mods, shaders, or resource packs found")
+
+        // ── 2. SHA-512 hash every mod jar ─────────────────────────────────
         val hashToDoc = mutableMapOf<String, DocumentFile>()
         for (doc in jarFiles) {
             val hash = context.contentResolver.openInputStream(doc.uri)
@@ -76,7 +91,6 @@ object MrpackExporter {
         }
 
         // ── 3. Bulk resolve hashes via Modrinth API ────────────────────────
-        // API accepts up to 100 hashes per call — batch if needed
         val resolved = mutableMapOf<String, com.example.modrinthforandroid.data.model.ModVersion>()
         hashToDoc.keys.chunked(100).forEach { batch ->
             try {
@@ -96,12 +110,9 @@ object MrpackExporter {
             val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull() ?: continue
 
             val fileObj = JSONObject().apply {
-                put("path",     "mods/${doc.name}")
+                put("path",      "mods/${doc.name}")
                 put("downloads", JSONArray().apply { put(file.url) })
-                put("hashes",   JSONObject().apply {
-                    put("sha512", hash)
-                    // sha1 not available without re-reading the file — omit
-                })
+                put("hashes",    JSONObject().apply { put("sha512", hash) })
                 put("env", JSONObject().apply {
                     put("client", "required")
                     put("server", "required")
@@ -120,12 +131,11 @@ object MrpackExporter {
             put("files",         filesArray)
             put("dependencies",  JSONObject().apply {
                 put("minecraft", config.mcVersion)
-                // Add loader dependency if not vanilla
                 when (config.loader.lowercase()) {
-                    "fabric"   -> put("fabric-loader",   config.loaderVersion)
-                    "forge"    -> put("forge",            config.loaderVersion)
-                    "quilt"    -> put("quilt-loader",     config.loaderVersion)
-                    "neoforge" -> put("neoforge",         config.loaderVersion)
+                    "fabric"   -> put("fabric-loader",  config.loaderVersion)
+                    "forge"    -> put("forge",           config.loaderVersion)
+                    "quilt"    -> put("quilt-loader",    config.loaderVersion)
+                    "neoforge" -> put("neoforge",        config.loaderVersion)
                 }
             })
         }
@@ -133,22 +143,34 @@ object MrpackExporter {
         // ── 5. Write .mrpack zip ──────────────────────────────────────────
         context.contentResolver.openOutputStream(outputUri)?.use { out ->
             ZipOutputStream(out.buffered()).use { zip ->
+
                 // modrinth.index.json
                 zip.putNextEntry(ZipEntry("modrinth.index.json"))
                 zip.write(index.toString(2).toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
 
-                // overrides/ directory stub (required by spec, can be empty)
+                // overrides/ stub
                 zip.putNextEntry(ZipEntry("overrides/"))
                 zip.closeEntry()
+
+                // Shaders + resource packs as overrides — copied directly into zip
+                for ((doc, zipPath) in overrideFiles) {
+                    context.contentResolver.openInputStream(doc.uri)?.use { input ->
+                        zip.putNextEntry(ZipEntry(zipPath))
+                        input.copyTo(zip)
+                        zip.closeEntry()
+                    }
+                }
             }
         } ?: error("Could not open output stream for export")
 
         ExportResult(
-            outputUri    = outputUri,
-            totalMods    = jarFiles.size,
-            resolvedMods = resolved.size,
-            skippedMods  = skipped
+            outputUri             = outputUri,
+            totalMods             = jarFiles.size,
+            resolvedMods          = resolved.size,
+            skippedMods           = skipped,
+            shadersExported       = overrideFiles.count { it.zipPath.startsWith("overrides/shaderpacks/") },
+            resourcePacksExported = overrideFiles.count { it.zipPath.startsWith("overrides/resourcepacks/") }
         )
     }
 

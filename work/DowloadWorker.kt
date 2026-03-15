@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.*
+import com.example.modrinthforandroid.data.AppSettings
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -118,6 +119,17 @@ class DownloadWorker(
                                 subtitle = "Saved to Downloads/"))
                         }
                     }
+                    // ── Milestone check ───────────────────────────────────
+                    val settings     = AppSettings.get(ctx)
+                    val newTotal     = settings.incrementDownloads()
+                    val milestone    = AppSettings.milestoneMessage(newTotal)
+                    if (milestone != null) {
+                        nm.notify(
+                            MILESTONE_NOTIF_ID,
+                            buildMilestoneNotif(milestone)
+                        )
+                    }
+
                     return Result.success()
                 }
 
@@ -259,10 +271,30 @@ class DownloadWorker(
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            // Download progress channel
+            val downloadChannel = NotificationChannel(
                 NOTIF_CHANNEL_ID, NOTIF_CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW
             ).apply { description = "Mod download progress" }
-            nm.createNotificationChannel(channel)
+            nm.createNotificationChannel(downloadChannel)
+
+            // Milestone channel — slightly higher importance so it pops
+            val milestoneChannel = NotificationChannel(
+                MILESTONE_CHANNEL_ID, MILESTONE_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Download milestone celebrations" }
+            nm.createNotificationChannel(milestoneChannel)
         }
     }
+
+    private fun buildMilestoneNotif(message: String) =
+        NotificationCompat.Builder(ctx, MILESTONE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.star_on)
+            .setContentTitle("Milestone reached!")
+            .setContentText(message)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
 }
+
+const val MILESTONE_CHANNEL_ID   = "modrinth_milestones"
+const val MILESTONE_CHANNEL_NAME = "Download Milestones"
+const val MILESTONE_NOTIF_ID     = 99999

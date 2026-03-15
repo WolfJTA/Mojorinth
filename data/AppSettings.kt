@@ -34,6 +34,22 @@ class AppSettings private constructor(private val prefs: SharedPreferences) {
             "datapack"     to "datapacks",
             "plugin"       to "plugins"
         )
+
+        /** Milestone download counts that trigger a celebration toast. */
+        val MILESTONES = setOf(1, 5, 10, 25, 50, 100, 250, 500, 1000)
+
+        fun milestoneMessage(count: Int): String? = when (count) {
+            1    -> "🎉 First mod downloaded! Welcome to Mojorinth!"
+            5    -> "⚡ 5 mods downloaded! You're getting started!"
+            10   -> "🔥 10 mods! You're on a roll!"
+            25   -> "🚀 25 mods! Certified modpack builder!"
+            50   -> "💪 50 mods downloaded! Absolute legend!"
+            100  -> "🏆 100 mods!! You are unstoppable!"
+            250  -> "🌟 250 mods! Mojorinth royalty!"
+            500  -> "👑 500 mods! Are you okay?? 😂"
+            1000 -> "🤯 1000 mods. Seek help. (Respectfully 💚)"
+            else -> null
+        }
     }
 
     var theme: String
@@ -85,4 +101,16 @@ class AppSettings private constructor(private val prefs: SharedPreferences) {
 
     fun setDownloadFolder(projectType: String, path: String) =
         prefs.edit { putString("folder_$projectType", path) }
+
+    // ── Milestone tracking ────────────────────────────────────────────────
+    var totalDownloads: Int
+        get()  = prefs.getInt("total_downloads", 0)
+        set(v) = prefs.edit { putInt("total_downloads", v) }
+
+    /** Increments download count and returns the new total. */
+    fun incrementDownloads(): Int {
+        val newTotal = totalDownloads + 1
+        totalDownloads = newTotal
+        return newTotal
+    }
 }

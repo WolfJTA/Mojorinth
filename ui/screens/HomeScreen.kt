@@ -65,6 +65,7 @@ fun HomeScreen(
     onBrowseType: (String) -> Unit = {},
     onManageInstance: () -> Unit = {},
     onLogsClick: () -> Unit = {},
+    onStatsClick: () -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
     val context   = LocalContext.current
@@ -175,6 +176,10 @@ fun HomeScreen(
                 onLogsClick      = {
                     scope.launch { drawerState.close() }
                     onLogsClick()
+                },
+                onStatsClick     = {
+                    scope.launch { drawerState.close() }
+                    onStatsClick()
                 },
                 onManageInstance = {
                     scope.launch { drawerState.close() }
@@ -547,6 +552,7 @@ private fun AppDrawer(
     activeInstance: String?,
     activeInstanceDisplay: String?,
     onLogsClick: () -> Unit,
+    onStatsClick: () -> Unit,
     onManageInstance: () -> Unit,
     onSettingsClick: () -> Unit,
     onLaunchMojo: () -> Unit,
@@ -647,6 +653,12 @@ private fun AppDrawer(
             label   = "Log Analyzer",
             badge   = "NEW",
             onClick = onLogsClick
+        )
+
+        DrawerNavItem(
+            icon    = Icons.Default.BarChart,
+            label   = "Stats",
+            onClick = onStatsClick
         )
 
         DrawerNavItem(

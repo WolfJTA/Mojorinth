@@ -233,6 +233,18 @@ fun ExportModListSheet(onDismiss: () -> Unit) {
                                     StatBox("Resolved",      "${result.resolvedMods}")
                                     StatBox("Skipped",       "${result.skippedMods.size}")
                                 }
+                                if (result.shadersExported > 0 || result.resourcePacksExported > 0) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceEvenly
+                                    ) {
+                                        if (result.shadersExported > 0)
+                                            StatBox("✨ Shaders",   "${result.shadersExported}")
+                                        if (result.resourcePacksExported > 0)
+                                            StatBox("🎨 Res. Packs", "${result.resourcePacksExported}")
+                                    }
+                                }
                             }
                         }
 

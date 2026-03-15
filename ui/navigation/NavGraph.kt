@@ -24,7 +24,8 @@ fun ModrinthNavGraph(
                 onSettingsClick  = { navController.navigate(Screen.Settings.route) },
                 onBrowseType     = { navController.navigate(Screen.Browse.createRoute(it)) },
                 onManageInstance = { navController.navigate(Screen.InstanceManager.route) },
-                onLogsClick      = { navController.navigate(Screen.LogAnalyzer.route) }  // ← NEW
+                onLogsClick      = { navController.navigate(Screen.LogAnalyzer.route) },
+                onStatsClick     = { navController.navigate(Screen.Stats.route) }
             )
         }
 
@@ -70,9 +71,12 @@ fun ModrinthNavGraph(
             InstanceManagerScreen(onBack = { navController.popBackStack() })
         }
 
-        // ── Log Analyzer ──────────────────────────────────────────────────────
         composable(Screen.LogAnalyzer.route) {
             LogAnalyzerScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Screen.Stats.route) {
+            StatsScreen(onBack = { navController.popBackStack() })
         }
     }
 }
