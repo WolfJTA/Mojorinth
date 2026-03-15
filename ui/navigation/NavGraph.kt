@@ -1,6 +1,8 @@
 package com.example.modrinthforandroid.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -8,12 +10,23 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.modrinthforandroid.ui.screens.*
+import com.example.modrinthforandroid.viewmodel.StatsViewModel
+import com.example.modrinthforandroid.viewmodel.StatsViewModelFactory
 
 @Composable
 fun ModrinthNavGraph(
     navController: NavHostController = rememberNavController(),
     onThemeChange: (String) -> Unit = {}
 ) {
+    val context = LocalContext.current
+
+    // Hoist StatsViewModel here so it's created when the nav graph first
+    // composes (i.e. app open) and stays alive/cached for the lifetime of
+    // the nav graph — not recreated every time the user navigates to Stats.
+    val statsViewModel: StatsViewModel = viewModel(
+        factory = StatsViewModelFactory(context.applicationContext)
+    )
+
     NavHost(navController = navController, startDestination = Screen.Home.route) {
 
         composable(Screen.Home.route) {
@@ -48,7 +61,8 @@ fun ModrinthNavGraph(
             Screen.Browse.route,
             arguments = listOf(navArgument("projectType") { type = NavType.StringType })
         ) { backStackEntry ->
-            val projectType = backStackEntry.arguments?.getString("projectType") ?: return@composable
+            val projectType = backStackEntry.arguments?.getString("projectType")
+                ?: return@composable
             BrowseScreen(
                 projectType = projectType,
                 onModClick  = { navController.navigate(Screen.ModDetail.createRoute(it)) },
@@ -76,7 +90,10 @@ fun ModrinthNavGraph(
         }
 
         composable(Screen.Stats.route) {
-            StatsScreen(onBack = { navController.popBackStack() })
+            StatsScreen(
+                onBack    = { navController.popBackStack() },
+                viewModel = statsViewModel
+            )
         }
     }
 }

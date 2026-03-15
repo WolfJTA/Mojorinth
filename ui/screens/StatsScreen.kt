@@ -1,7 +1,5 @@
 package com.example.modrinthforandroid.ui.screens
 
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,12 +20,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.modrinthforandroid.data.AppSettings
 import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.ui.components.MojorinthLoadingSpinner
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.example.modrinthforandroid.viewmodel.StatsViewModel
+import com.example.modrinthforandroid.viewmodel.StatsViewModelFactory
 
 // ─── Data model ───────────────────────────────────────────────────────────────
 
@@ -45,71 +43,18 @@ data class InstanceStats(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatsScreen(onBack: () -> Unit) {
-    val context  = LocalContext.current
-    val settings = remember { AppSettings.get(context) }
+fun StatsScreen(
+    onBack: () -> Unit,
+    viewModel: StatsViewModel = viewModel(
+        factory = StatsViewModelFactory(LocalContext.current.applicationContext)
+    )
+) {
+    val context    = LocalContext.current
+    val settings   = remember { AppSettings.get(context) }
 
-    var isScanning by remember { mutableStateOf(true) }   // small inline indicator
-    var statsList  by remember { mutableStateOf<List<InstanceStats>>(emptyList()) }
-    var totalBytes by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val rootUri = InstanceManager.rootUri
-            if (rootUri == null) { isScanning = false; return@withContext }
-
-            val rootDoc = DocumentFile.fromTreeUri(context, rootUri)
-            val instances = rootDoc?.listFiles()?.filter { it.isDirectory } ?: emptyList()
-
-            val results = mutableListOf<InstanceStats>()
-            for (instanceDir in instances) {
-                val folderName = instanceDir.name ?: continue
-
-                val configFile = instanceDir.findFile("mojo_instance.json")
-                val displayName = if (configFile != null) {
-                    try {
-                        val json = context.contentResolver
-                            .openInputStream(configFile.uri)
-                            ?.bufferedReader()?.use { it.readText() } ?: ""
-                        val parsed = com.example.modrinthforandroid.data.model.MojoInstance.parse(json)
-                        parsed?.name?.takeIf { it.isNotBlank() } ?: folderName
-                    } catch (_: Exception) { folderName }
-                } else folderName
-
-                val modsDir  = instanceDir.findFile("mods")
-                val modFiles = modsDir?.listFiles()?.filter { it.isFile } ?: emptyList()
-                val modsEnabled  = modFiles.count {
-                    val n = it.name ?: ""
-                    n.endsWith(".jar", ignoreCase = true) &&
-                            !n.endsWith(".disabled", ignoreCase = true)
-                }
-                val modsDisabled = modFiles.count {
-                    (it.name ?: "").endsWith(".disabled", ignoreCase = true)
-                }
-                val shaders       = instanceDir.findFile("shaderpacks")
-                    ?.listFiles()?.count { it.isFile } ?: 0
-                val resourcePacks = instanceDir.findFile("resourcepacks")
-                    ?.listFiles()?.count { it.isFile } ?: 0
-                val size = folderSizeBytes(instanceDir)
-
-                results += InstanceStats(
-                    folderName     = folderName,
-                    displayName    = displayName,
-                    modsEnabled    = modsEnabled,
-                    modsDisabled   = modsDisabled,
-                    shaders        = shaders,
-                    resourcePacks  = resourcePacks,
-                    totalSizeBytes = size
-                )
-
-                val sorted = results.sortedBy { it.displayName.lowercase() }
-                statsList  = sorted
-                totalBytes = sorted.sumOf { it.totalSizeBytes }
-            }
-
-            isScanning = false
-        }
-    }
+    val isScanning by viewModel.isScanning.collectAsState()
+    val statsList  by viewModel.statsList.collectAsState()
+    val totalBytes by viewModel.totalBytes.collectAsState()
 
     Scaffold(
         topBar = {
@@ -129,6 +74,16 @@ fun StatsScreen(onBack: () -> Unit) {
                         )
                     }
                 },
+                actions = {
+                    if (!isScanning) {
+                        IconButton(onClick = { viewModel.refresh() }) {
+                            Icon(
+                                Icons.Default.Refresh, "Refresh",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -144,11 +99,15 @@ fun StatsScreen(onBack: () -> Unit) {
                     modifier = Modifier.padding(32.dp)
                 ) {
                     Text("📊", fontSize = 48.sp)
-                    Text("No folder linked", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "No folder linked",
+                        style      = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
                     Text(
                         "Link your MojoLauncher instances folder from the home screen to see stats.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        style     = MaterialTheme.typography.bodySmall,
+                        color     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center
                     )
                 }
@@ -157,8 +116,8 @@ fun StatsScreen(onBack: () -> Unit) {
         }
 
         LazyColumn(
-            modifier       = Modifier.fillMaxSize().padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
+            modifier            = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding      = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -177,67 +136,46 @@ fun StatsScreen(onBack: () -> Unit) {
                     tonalElevation = 2.dp,
                     modifier       = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(
+                        modifier            = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         GlobalStatRow(
                             icon  = Icons.Default.Download,
                             label = "Total mods downloaded",
-                            value = settings.totalDownloads.toString(),
-                            color = MaterialTheme.colorScheme.primary
+                            value = settings.totalDownloads.toString()
                         )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                        GlobalStatRow(
-                            icon  = Icons.Default.Folder,
-                            label = "Instances",
-                            value = statsList.size.toString(),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         GlobalStatRow(
                             icon  = Icons.Default.Storage,
-                            label = "Total disk usage",
-                            value = formatBytes(totalBytes),
-                            color = MaterialTheme.colorScheme.primary
+                            label = "Total size",
+                            value = formatBytes(totalBytes)
                         )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         GlobalStatRow(
-                            icon  = Icons.Default.Extension,
-                            label = "Total mods (enabled)",
-                            value = statsList.sumOf { it.modsEnabled }.toString(),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                        GlobalStatRow(
-                            icon  = Icons.Default.AutoAwesome,
-                            label = "Total shaders",
-                            value = statsList.sumOf { it.shaders }.toString(),
-                            color = Color(0xFF42A5F5)
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                        GlobalStatRow(
-                            icon  = Icons.Default.Palette,
-                            label = "Total resource packs",
-                            value = statsList.sumOf { it.resourcePacks }.toString(),
-                            color = Color(0xFFAB47BC)
+                            icon  = Icons.Default.GridView,
+                            label = "Instances",
+                            value = statsList.size.toString()
                         )
 
-                        // ── Next milestone ──────────────────────────────
+                        // ── Milestone progress ────────────────────────────
                         val nextMilestone = AppSettings.MILESTONES
                             .sorted()
                             .firstOrNull { it > settings.totalDownloads }
                         if (nextMilestone != null) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                            val progress = settings.totalDownloads.toFloat() / nextMilestone
+                            val progress = settings.totalDownloads.toFloat() / nextMilestone.toFloat()
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            )
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier          = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         "🏆 Next milestone",
-                                        style = MaterialTheme.typography.labelMedium,
+                                        style      = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        color      = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
                                         "${settings.totalDownloads} / $nextMilestone",
@@ -247,7 +185,10 @@ fun StatsScreen(onBack: () -> Unit) {
                                 }
                                 LinearProgressIndicator(
                                     progress       = { progress.coerceIn(0f, 1f) },
-                                    modifier       = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                    modifier       = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
                                     color          = MaterialTheme.colorScheme.primary,
                                     trackColor     = MaterialTheme.colorScheme.surfaceVariant
                                 )
@@ -278,10 +219,10 @@ fun StatsScreen(onBack: () -> Unit) {
                 items(statsList, key = { it.folderName }) { stats ->
                     InstanceStatsCard(stats)
                 }
-            } else {
+            } else if (!isScanning) {
                 item {
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(32.dp),
+                        modifier         = Modifier.fillMaxWidth().padding(32.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -299,7 +240,9 @@ fun StatsScreen(onBack: () -> Unit) {
             if (isScanning) {
                 item {
                     Row(
-                        modifier              = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        modifier              = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
@@ -330,7 +273,10 @@ private fun InstanceStatsCard(stats: InstanceStats) {
         tonalElevation = if (isActive) 4.dp else 2.dp,
         modifier       = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier            = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
 
             // Header
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -368,7 +314,9 @@ private fun InstanceStatsCard(stats: InstanceStats) {
                 }
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+            )
 
             // Stat chips grid
             Row(
@@ -376,17 +324,17 @@ private fun InstanceStatsCard(stats: InstanceStats) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatChip(
-                    emoji = "✅",
-                    label = "Enabled",
-                    value = stats.modsEnabled.toString(),
-                    color = green,
+                    emoji    = "✅",
+                    label    = "Enabled",
+                    value    = stats.modsEnabled.toString(),
+                    color    = green,
                     modifier = Modifier.weight(1f)
                 )
                 StatChip(
-                    emoji = "⏸",
-                    label = "Disabled",
-                    value = stats.modsDisabled.toString(),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    emoji    = "⏸",
+                    label    = "Disabled",
+                    value    = stats.modsDisabled.toString(),
+                    color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -395,17 +343,17 @@ private fun InstanceStatsCard(stats: InstanceStats) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatChip(
-                    emoji = "✨",
-                    label = "Shaders",
-                    value = stats.shaders.toString(),
-                    color = Color(0xFF42A5F5),
+                    emoji    = "✨",
+                    label    = "Shaders",
+                    value    = stats.shaders.toString(),
+                    color    = Color(0xFF42A5F5),
                     modifier = Modifier.weight(1f)
                 )
                 StatChip(
-                    emoji = "🎨",
-                    label = "Res. Packs",
-                    value = stats.resourcePacks.toString(),
-                    color = Color(0xFFAB47BC),
+                    emoji    = "🎨",
+                    label    = "Res. Packs",
+                    value    = stats.resourcePacks.toString(),
+                    color    = Color(0xFFAB47BC),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -413,30 +361,26 @@ private fun InstanceStatsCard(stats: InstanceStats) {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Small composables ────────────────────────────────────────────────────────
 
 @Composable
-private fun GlobalStatRow(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    color: Color
-) {
+private fun GlobalStatRow(icon: ImageVector, label: String, value: String) {
     Row(
         modifier          = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            icon, null,
-            tint     = color.copy(alpha = 0.7f),
-            modifier = Modifier.size(18.dp)
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint     = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.width(10.dp))
         Text(
             label,
             style    = MaterialTheme.typography.bodySmall,
-            color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
+            color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
         )
         Text(
             value,
@@ -456,46 +400,38 @@ private fun StatChip(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape    = RoundedCornerShape(10.dp),
-        color    = color.copy(alpha = 0.08f),
-        modifier = modifier
+        shape          = RoundedCornerShape(10.dp),
+        color          = color.copy(alpha = 0.08f),
+        modifier       = modifier
     ) {
-        Row(
-            modifier          = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        Column(
+            modifier            = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(emoji, fontSize = 14.sp)
-            Column {
-                Text(
-                    value,
-                    style      = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color      = color
-                )
-                Text(
-                    label,
-                    style    = MaterialTheme.typography.labelSmall,
-                    color    = color.copy(alpha = 0.7f),
-                    fontSize = 9.sp
-                )
-            }
+            Text(emoji, fontSize = 16.sp)
+            Text(
+                value,
+                style      = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color      = color
+            )
+            Text(
+                label,
+                style    = MaterialTheme.typography.labelSmall,
+                color    = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
+
+// ─── Util ─────────────────────────────────────────────────────────────────────
 
 private fun formatBytes(bytes: Long): String = when {
     bytes >= 1_073_741_824L -> "%.1f GB".format(bytes / 1_073_741_824.0)
     bytes >= 1_048_576L     -> "%.1f MB".format(bytes / 1_048_576.0)
     bytes >= 1_024L         -> "%.1f KB".format(bytes / 1_024.0)
     else                    -> "$bytes B"
-}
-
-private fun folderSizeBytes(dir: DocumentFile): Long {
-    var total = 0L
-    for (file in dir.listFiles()) {
-        total += if (file.isDirectory) folderSizeBytes(file)
-        else file.length()
-    }
-    return total
 }
