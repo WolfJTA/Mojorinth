@@ -3,7 +3,7 @@ package com.example.modrinthforandroid.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 
-class BrowseViewModelFactory(
+class BrowseViewModelFactory1(
     private val projectType: String,
     private val initialFilters: BrowseFilters = BrowseFilters()
 ) : ViewModelProvider.Factory {

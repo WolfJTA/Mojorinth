@@ -59,6 +59,7 @@ import com.example.modrinthforandroid.work.KEY_FILENAME
 import com.example.modrinthforandroid.work.KEY_FINAL_DIR
 import com.example.modrinthforandroid.work.KEY_INSTANCE_NAME
 import com.example.modrinthforandroid.work.KEY_NOTIF_ID
+import com.example.modrinthforandroid.work.KEY_PROJECT_ID
 import com.example.modrinthforandroid.work.KEY_PROJECT_TYPE
 import com.example.modrinthforandroid.work.KEY_ROOT_URI
 import com.example.modrinthforandroid.work.KEY_TEMP_PATH
@@ -89,7 +90,8 @@ fun triggerDownload(
     url: String,
     filename: String,
     title: String,
-    projectType: String
+    projectType: String,
+    projectId: String = ""
 ): UUID {
     val downloadsDir = android.os.Environment
         .getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
@@ -124,7 +126,8 @@ fun triggerDownload(
             KEY_TEMP_PATH     to File(downloadsDir, filename).absolutePath,
             KEY_ROOT_URI      to rootUriStr,
             KEY_INSTANCE_NAME to instanceName,
-            KEY_PROJECT_TYPE  to projectType
+            KEY_PROJECT_TYPE  to projectType,
+            KEY_PROJECT_ID    to projectId
         ))
         .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         .build()
@@ -140,9 +143,12 @@ fun triggerDownload(
 fun ModDetailScreen(
     projectId: String,
     onBack: () -> Unit,
-    viewModel: ModDetailViewModel = viewModel(factory = ModDetailViewModelFactory(projectId))
+    viewModel: ModDetailViewModel = viewModel(
+        factory = ModDetailViewModelFactory(projectId, LocalContext.current.applicationContext)
+    )
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState              by viewModel.uiState.collectAsState()
+    val installedInInstances by viewModel.installedInInstances.collectAsState()
     val context = LocalContext.current
 
     var downloadInfoMap by remember { mutableStateOf(mapOf<String, VersionDownloadInfo>()) }
@@ -179,7 +185,8 @@ fun ModDetailScreen(
         version: ModVersion,
         displayTitle: String,
         projectType: String,
-        projectSlug: String = ""
+        projectSlug: String = "",
+        pid: String = ""
     ) {
         val file = version.files.firstOrNull { it.primary } ?: version.files.firstOrNull()
         ?: return
@@ -194,7 +201,8 @@ fun ModDetailScreen(
             url         = file.url,
             filename    = file.filename,
             title       = displayTitle,
-            projectType = projectType
+            projectType = projectType,
+            projectId   = pid
         )
         downloadInfoMap = downloadInfoMap + (version.id to VersionDownloadInfo(
             versionId   = version.id,
@@ -215,7 +223,7 @@ fun ModDetailScreen(
         val instanceConfig = InstanceManager.activeInstanceConfig
 
         // Always enqueue the main mod immediately for instant feedback
-        enqueueOne(version, "${project.title} ${version.name}", project.projectType, project.slug)
+        enqueueOne(version, "${project.title} ${version.name}", project.projectType, project.slug, project.id)
 
         // If we have an active instance, resolve dependencies in the background
         if (instanceConfig != null && version.dependencies.any { it.isRequired || it.isOptional }) {
@@ -236,7 +244,8 @@ fun ModDetailScreen(
                         enqueueOne(
                             version      = depVer,
                             displayTitle = "Dependency: ${depVer.name}",
-                            projectType  = "mod"
+                            projectType  = "mod",
+                            pid          = dep.projectId ?: ""
                         )
                     }
                 }
@@ -276,6 +285,7 @@ fun ModDetailScreen(
                                 progress = if (newState == DownloadState.DONE) 100 else progress
                             ))
                             if (newState == DownloadState.DONE && info.projectSlug.isNotEmpty()) {
+                                viewModel.loadInstallStatus()
                                 val result = RendererRules.applyIfNeeded(
                                     context     = context,
                                     projectSlug = info.projectSlug
@@ -293,13 +303,28 @@ fun ModDetailScreen(
                 TopAppBar(
                     title = {
                         val title = (uiState as? ModDetailUiState.Success)?.project?.title ?: ""
-                        Text(
-                            text       = title,
-                            fontWeight = FontWeight.Bold,
-                            maxLines   = 1,
-                            overflow   = TextOverflow.Ellipsis,
-                            color      = MaterialTheme.colorScheme.onBackground
-                        )
+                        Column {
+                            Text(
+                                text       = title,
+                                fontWeight = FontWeight.Bold,
+                                maxLines   = 1,
+                                overflow   = TextOverflow.Ellipsis,
+                                color      = MaterialTheme.colorScheme.onBackground
+                            )
+                            if (installedInInstances.isNotEmpty()) {
+                                val label = if (installedInInstances.size == 1)
+                                    "✅ Installed in ${installedInInstances.first()}"
+                                else
+                                    "✅ Installed in ${installedInInstances.size} instances"
+                                Text(
+                                    text     = label,
+                                    style    = MaterialTheme.typography.labelSmall,
+                                    color    = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {

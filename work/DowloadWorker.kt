@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.*
 import com.example.modrinthforandroid.data.AppSettings
+import com.example.modrinthforandroid.data.InstalledModRepository
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -25,6 +26,7 @@ const val KEY_TEMP_PATH      = "temp_path"
 const val KEY_ROOT_URI       = "root_uri"         // content:// URI string for the instances root
 const val KEY_INSTANCE_NAME  = "instance_name"    // subfolder name e.g. "test1"
 const val KEY_PROJECT_TYPE   = "project_type"     // "mod", "shader", etc.
+const val KEY_PROJECT_ID     = "project_id"       // Modrinth project ID — for install tracking
 
 /**
  * Polls DownloadManager progress and shows a notification. On completion,
@@ -70,6 +72,7 @@ class DownloadWorker(
         val rootUriStr   = inputData.getString(KEY_ROOT_URI)
         val instanceName = inputData.getString(KEY_INSTANCE_NAME)
         val projectType  = inputData.getString(KEY_PROJECT_TYPE) ?: "mod"
+        val projectId    = inputData.getString(KEY_PROJECT_ID)   ?: ""
 
         if (downloadId == -1L) return Result.failure()
 
@@ -119,10 +122,25 @@ class DownloadWorker(
                                 subtitle = "Saved to Downloads/"))
                         }
                     }
+
+                    // ── Record install in Room ────────────────────────────
+                    if (projectId.isNotBlank() && !instanceName.isNullOrBlank()) {
+                        try {
+                            InstalledModRepository(ctx).recordInstall(
+                                projectId    = projectId,
+                                instanceName = instanceName,
+                                fileName     = filename,
+                                projectType  = projectType
+                            )
+                        } catch (_: Exception) {
+                            // Non-critical — don't fail the download if DB write fails
+                        }
+                    }
+
                     // ── Milestone check ───────────────────────────────────
-                    val settings     = AppSettings.get(ctx)
-                    val newTotal     = settings.incrementDownloads()
-                    val milestone    = AppSettings.milestoneMessage(newTotal)
+                    val settings  = AppSettings.get(ctx)
+                    val newTotal  = settings.incrementDownloads()
+                    val milestone = AppSettings.milestoneMessage(newTotal)
                     if (milestone != null) {
                         nm.notify(
                             MILESTONE_NOTIF_ID,
@@ -181,9 +199,8 @@ class DownloadWorker(
             val src = File(tempPath)
             ctx.contentResolver.openOutputStream(destFile.uri, "wt")?.use { out ->
                 src.inputStream().use { it.copyTo(out) }
-            } ?: throw IllegalStateException("Cannot open output stream for ${destFile.uri}")
+            } ?: throw IllegalStateException("Cannot open output stream for '$filename'")
 
-            // Clean up temp file from Downloads/
             src.delete()
 
             nm.notify(notifId, buildNotif(title, filename, 100, 100,
@@ -191,10 +208,9 @@ class DownloadWorker(
                 subtitle = "Saved to $instanceName/$subfolder/"))
 
         } catch (e: Exception) {
-            // SAF move failed — notify with error, file stays in Downloads/
-            nm.notify(notifId, buildNotif(title, filename, 100, 100,
-                indeterminate = false, done = true,
-                subtitle = "In Downloads/ (SAF error: ${e.message})"))
+            nm.notify(notifId, buildNotif(title, filename, 0, 0,
+                indeterminate = false, done = false,
+                subtitle = "Move failed: ${e.message}"))
         }
     }
 
@@ -209,43 +225,29 @@ class DownloadWorker(
     ) {
         try {
             val src  = File(tempPath)
-            val dir  = File(finalDir).also { it.mkdirs() }
-            val dest = File(dir, filename)
-
-            if (src.exists()) {
-                src.copyTo(dest, overwrite = true)
-                src.delete()
-                nm.notify(notifId, buildNotif(title, filename, 100, 100,
-                    indeterminate = false, done = true,
-                    subtitle = "Saved to ${dir.name}/"))
-            } else {
-                nm.notify(notifId, buildNotif(title, filename, 100, 100,
-                    indeterminate = false, done = true,
-                    subtitle = "Saved to ${dir.name}/"))
-            }
-        } catch (e: Exception) {
+            val dest = File(finalDir, filename).also { File(finalDir).mkdirs() }
+            src.copyTo(dest, overwrite = true)
+            src.delete()
             nm.notify(notifId, buildNotif(title, filename, 100, 100,
                 indeterminate = false, done = true,
-                subtitle = "In Downloads/ (move failed: ${e.message})"))
+                subtitle = "Saved to $finalDir"))
+        } catch (e: Exception) {
+            nm.notify(notifId, buildNotif(title, filename, 0, 0,
+                indeterminate = false, done = false,
+                subtitle = "Move failed: ${e.message}"))
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Notification helpers ──────────────────────────────────────────────────
 
-    private fun projectTypeToSubfolder(projectType: String) = when (projectType) {
-        "mod", "modpack" -> "mods"
-        "shader"         -> "shaderpacks"
-        "resourcepack"   -> "resourcepacks"
-        "datapack"       -> "datapacks"
-        "plugin"         -> "plugins"
-        else             -> "mods"
-    }
-
-    private fun mimeTypeFor(filename: String) = when (filename.substringAfterLast('.').lowercase()) {
-        "jar"    -> "application/java-archive"
-        "zip"    -> "application/zip"
-        "mrpack" -> "application/zip"
-        else     -> "application/octet-stream"
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIF_CHANNEL_ID, NOTIF_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            )
+            nm.createNotificationChannel(channel)
+        }
     }
 
     private fun buildNotif(
@@ -257,44 +259,39 @@ class DownloadWorker(
         done: Boolean = false,
         subtitle: String? = null
     ) = NotificationCompat.Builder(ctx, NOTIF_CHANNEL_ID)
-        .setSmallIcon(
-            if (done) android.R.drawable.stat_sys_download_done
-            else      android.R.drawable.stat_sys_download
-        )
-        .setContentTitle(if (done) "Downloaded: $title" else title)
+        .setSmallIcon(android.R.drawable.stat_sys_download)
+        .setContentTitle(title)
         .setContentText(subtitle ?: filename)
         .setProgress(max, progress, indeterminate)
         .setOngoing(!done)
         .setAutoCancel(done)
-        .setPriority(NotificationCompat.PRIORITY_LOW)
         .build()
 
-    private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Download progress channel
-            val downloadChannel = NotificationChannel(
-                NOTIF_CHANNEL_ID, NOTIF_CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "Mod download progress" }
-            nm.createNotificationChannel(downloadChannel)
-
-            // Milestone channel — slightly higher importance so it pops
-            val milestoneChannel = NotificationChannel(
-                MILESTONE_CHANNEL_ID, MILESTONE_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT
-            ).apply { description = "Download milestone celebrations" }
-            nm.createNotificationChannel(milestoneChannel)
-        }
-    }
-
     private fun buildMilestoneNotif(message: String) =
-        NotificationCompat.Builder(ctx, MILESTONE_CHANNEL_ID)
+        NotificationCompat.Builder(ctx, NOTIF_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.star_on)
-            .setContentTitle("Milestone reached!")
+            .setContentTitle("🎉 Milestone reached!")
             .setContentText(message)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
+
+    companion object {
+        const val MILESTONE_NOTIF_ID = 999_999
+    }
 }
 
-const val MILESTONE_CHANNEL_ID   = "modrinth_milestones"
-const val MILESTONE_CHANNEL_NAME = "Download Milestones"
-const val MILESTONE_NOTIF_ID     = 99999
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fun projectTypeToSubfolder(projectType: String): String = when (projectType) {
+    "shader"       -> "shaderpacks"
+    "resourcepack" -> "resourcepacks"
+    "datapack"     -> "datapacks"
+    else           -> "mods"
+}
+
+fun mimeTypeFor(filename: String): String = when {
+    filename.endsWith(".jar",  ignoreCase = true) -> "application/java-archive"
+    filename.endsWith(".zip",  ignoreCase = true) -> "application/zip"
+    filename.endsWith(".json", ignoreCase = true) -> "application/json"
+    else                                          -> "application/octet-stream"
+}

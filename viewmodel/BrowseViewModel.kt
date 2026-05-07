@@ -1,7 +1,11 @@
 package com.example.modrinthforandroid.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.modrinthforandroid.data.InstalledModRepository
+import com.example.modrinthforandroid.data.InstanceManager
 import com.example.modrinthforandroid.data.ModrinthRepository
 import com.example.modrinthforandroid.data.model.SearchResult
 import kotlinx.coroutines.FlowPreview
@@ -28,7 +32,8 @@ data class BrowseUiState(
 @OptIn(FlowPreview::class)
 class BrowseViewModel(
     val projectType: String,
-    initialFilters: BrowseFilters = BrowseFilters()   // ← accepts pre-populated filters
+    initialFilters: BrowseFilters = BrowseFilters(),
+    private val appContext: Context? = null
 ) : ViewModel() {
 
     private val repository = ModrinthRepository()
@@ -41,6 +46,27 @@ class BrowseViewModel(
 
     private val _uiState = MutableStateFlow(BrowseUiState())
     val uiState: StateFlow<BrowseUiState> = _uiState.asStateFlow()
+
+    /**
+     * Set of project IDs installed in the currently active instance.
+     * Observed live from Room — updates instantly after a download completes.
+     * Empty set when no instance is active or context unavailable.
+     */
+    val installedIds: StateFlow<Set<String>> = run {
+        val instanceName = InstanceManager.activeInstanceName
+        if (appContext != null && !instanceName.isNullOrBlank()) {
+            InstalledModRepository(appContext)
+                .observeInstalledIds(instanceName)
+                .map { it.toHashSet() }
+                .stateIn(
+                    scope         = viewModelScope,
+                    started       = SharingStarted.WhileSubscribed(5_000),
+                    initialValue  = emptySet()
+                )
+        } else {
+            MutableStateFlow(emptySet())
+        }
+    }
 
     private var currentOffset = 0
     private val pageSize = 20
@@ -118,5 +144,21 @@ class BrowseViewModel(
                 )
             }
         }
+    }
+}
+
+// ─── Factory ─────────────────────────────────────────────────────────────────
+
+class BrowseViewModelFactory(
+    private val projectType: String,
+    private val initialFilters: BrowseFilters = BrowseFilters(),
+    private val appContext: Context? = null
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(BrowseViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return BrowseViewModel(projectType, initialFilters, appContext) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }

@@ -25,7 +25,8 @@ import com.example.modrinthforandroid.data.model.SearchResult
 fun ModCard(
     mod: SearchResult,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isInstalled: Boolean = false
 ) {
     // Read active instance config once — null means no instance selected
     val instanceConfig = remember { InstanceManager.activeInstanceConfig }
@@ -79,24 +80,32 @@ fun ModCard(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                // Title row + compatibility badge
+                // Title row + badges
                 Row(
                     modifier          = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text     = mod.title,
-                        style    = MaterialTheme.typography.titleMedium,
+                        text       = mod.title,
+                        style      = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis,
+                        modifier   = Modifier.weight(1f, fill = false)
                     )
 
                     Spacer(Modifier.width(6.dp))
 
-                    CompatibilityBadge(compatibility)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
+                        if (isInstalled) {
+                            InstalledBadge()
+                        }
+                        CompatibilityBadge(compatibility)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(2.dp))
@@ -157,21 +166,51 @@ fun ModCard(
     }
 }
 
+// ─── Installed badge ──────────────────────────────────────────────────────────
+
+@Composable
+fun InstalledBadge() {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+    ) {
+        Row(
+            modifier          = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = "Installed",
+                modifier = Modifier.size(10.dp),
+                tint     = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                "Installed",
+                style      = MaterialTheme.typography.labelSmall,
+                color      = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize   = 10.sp
+            )
+        }
+    }
+}
+
 // ─── Compatibility state ──────────────────────────────────────────────────────
 
 sealed class CompatibilityState {
-    object Unknown     : CompatibilityState()   // no instance selected
-    object Compatible  : CompatibilityState()   // MC version + loader both match
-    data class WrongLoader(val requiredLoader: String) : CompatibilityState()  // MC ok, loader mismatch
-    data class Incompatible(val requiredMc: String)    : CompatibilityState()  // MC version not found
+    object Unknown     : CompatibilityState()
+    object Compatible  : CompatibilityState()
+    data class WrongLoader(val requiredLoader: String) : CompatibilityState()
+    data class Incompatible(val requiredMc: String)    : CompatibilityState()
 }
 
-// ─── Badge composable ─────────────────────────────────────────────────────────
+// ─── Compatibility badge ──────────────────────────────────────────────────────
 
 @Composable
 fun CompatibilityBadge(state: CompatibilityState) {
     when (state) {
-        is CompatibilityState.Unknown -> Unit  // show nothing when no instance active
+        is CompatibilityState.Unknown -> Unit
 
         is CompatibilityState.Compatible -> Surface(
             shape = RoundedCornerShape(4.dp),

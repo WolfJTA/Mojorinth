@@ -1,17 +1,12 @@
 package com.example.modrinthforandroid.ui.screens
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,7 +22,7 @@ import com.example.modrinthforandroid.ui.components.FilterBottomSheet
 import com.example.modrinthforandroid.ui.components.ModCard
 import com.example.modrinthforandroid.viewmodel.BrowseFilters
 import com.example.modrinthforandroid.viewmodel.BrowseViewModel
-import com.example.modrinthforandroid.viewmodel.BrowseViewModelFactory
+import com.example.modrinthforandroid.viewmodel.BrowseViewModelFactory1
 
 fun projectTypeDisplayName(type: String) = when (type) {
     "mod"          -> "Mods"
@@ -60,16 +55,17 @@ fun BrowseScreen(
 
     val viewModel: BrowseViewModel = viewModel(
         key     = projectType,
-        factory = BrowseViewModelFactory(projectType, initialFilters)
+        factory = BrowseViewModelFactory1(projectType, initialFilters, context.applicationContext)
     )
 
-    val uiState by viewModel.uiState.collectAsState()
-    val query   by viewModel.query.collectAsState()
-    val filters by viewModel.filters.collectAsState()
+    val uiState      by viewModel.uiState.collectAsState()
+    val query        by viewModel.query.collectAsState()
+    val filters      by viewModel.filters.collectAsState()
+    val installedIds by viewModel.installedIds.collectAsState()
 
-    var showFilters     by remember { mutableStateOf(false) }
-    var searchFocused   by remember { mutableStateOf(false) }
-    var historyEntries  by remember { mutableStateOf(history.get(projectType)) }
+    var showFilters    by remember { mutableStateOf(false) }
+    var searchFocused  by remember { mutableStateOf(false) }
+    var historyEntries by remember { mutableStateOf(history.get(projectType)) }
     val listState = rememberLazyListState()
 
     // Infinite scroll
@@ -132,17 +128,20 @@ fun BrowseScreen(
             )
         }
     ) { innerPadding ->
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // ── Search bar ────────────────────────────────────────────────
             SearchBarWithHistory(
-                query       = query,
-                onQueryChange = { viewModel.onQueryChange(it) },
+                query          = query,
+                onQueryChange  = {
+                    viewModel.onQueryChange(it)
+                    if (it.isBlank()) historyEntries = history.get(projectType)
+                },
                 onFocusChanged = { searchFocused = it },
-                onSubmit    = {
+                onSubmit       = {
                     if (query.isNotBlank()) {
                         history.add(projectType, query)
                         historyEntries = history.get(projectType)
@@ -150,73 +149,39 @@ fun BrowseScreen(
                 }
             )
 
-            // ── History chips (shown when search bar is focused + query is empty) ──
-            if (searchFocused && query.isBlank() && historyEntries.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment     = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.History, null,
-                        modifier = Modifier.size(14.dp),
-                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
-                    historyEntries.forEach { entry ->
-                        InputChip(
-                            selected     = false,
-                            onClick      = {
-                                viewModel.onQueryChange(entry)
-                                searchFocused = false
-                            },
-                            label        = {
-                                Text(entry, style = MaterialTheme.typography.labelSmall)
-                            },
-                            trailingIcon = {
-                                IconButton(
-                                    onClick  = {
-                                        history.remove(projectType, entry)
-                                        historyEntries = history.get(projectType)
-                                    },
-                                    modifier = Modifier.size(16.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Close, "Remove",
-                                        modifier = Modifier.size(12.dp),
-                                        tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            // ── Active filter chips ───────────────────────────────────────
-            if (activeFilterCount > 0) {
-                ActiveFilterChips(
-                    filters          = filters,
-                    isInstanceFilter = isInstanceFiltered,
-                    instanceSummary  = instanceConfig?.summary,
-                    onClearFilters   = { viewModel.onFiltersChange(BrowseFilters()) }
-                )
-            }
+            ActiveFilterChips(
+                filters          = filters,
+                isInstanceFilter = isInstanceFiltered,
+                instanceSummary  = instanceConfig?.summary,
+                onClearFilter    = { viewModel.onFiltersChange(it) }
+            )
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
-                    uiState.isLoading -> CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center),
-                        color    = MaterialTheme.colorScheme.primary
-                    )
+                    // Search history overlay
+                    searchFocused && query.isBlank() && historyEntries.isNotEmpty() -> {
+                        SearchHistoryOverlay(
+                            entries   = historyEntries,
+                            onSelect  = { viewModel.onQueryChange(it) },
+                            onRemove  = {
+                                history.remove(projectType, it)
+                                historyEntries = history.get(projectType)
+                            }
+                        )
+                    }
+
+                    uiState.isLoading -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
 
                     uiState.error != null -> Column(
                         modifier            = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("😕 ${uiState.error}")
+                        Text("❌ ${uiState.error}")
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(onClick = { viewModel.onQueryChange(query) }) { Text("Retry") }
                     }
@@ -241,12 +206,16 @@ fun BrowseScreen(
                     }
 
                     else -> LazyColumn(
-                        state           = listState,
-                        contentPadding  = PaddingValues(16.dp),
+                        state               = listState,
+                        contentPadding      = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(uiState.results, key = { it.projectId }) { mod ->
-                            ModCard(mod = mod, onClick = { onModClick(mod.projectId) })
+                            ModCard(
+                                mod         = mod,
+                                onClick     = { onModClick(mod.projectId) },
+                                isInstalled = mod.projectId in installedIds
+                            )
                         }
                         if (uiState.isLoadingMore) {
                             item {
@@ -329,40 +298,65 @@ fun ActiveFilterChips(
     filters: BrowseFilters,
     isInstanceFilter: Boolean = false,
     instanceSummary: String? = null,
-    onClearFilters: () -> Unit
+    onClearFilter: (BrowseFilters) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
+    val chips = buildList {
         if (isInstanceFilter && instanceSummary != null) {
-            AssistChip(
-                onClick = {},
-                label   = {
-                    Text(
-                        "🎮 $instanceSummary",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            )
+            add("🎮 $instanceSummary" to filters.copy(gameVersion = null, loader = null))
         } else {
-            filters.gameVersion?.let {
-                AssistChip(onClick = {}, label = { Text(it, style = MaterialTheme.typography.labelSmall) })
+            filters.gameVersion?.let { add("MC $it" to filters.copy(gameVersion = null)) }
+            filters.loader?.let { add(it.replaceFirstChar { c -> c.uppercase() } to filters.copy(loader = null)) }
+        }
+        filters.category?.let { add(it to filters.copy(category = null)) }
+        if (filters.sortIndex != "relevance") add("Sort: ${filters.sortIndex}" to filters.copy(sortIndex = "relevance"))
+    }
+
+    if (chips.isNotEmpty()) {
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding        = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(chips) { (label, cleared) ->
+                FilterChip(
+                    selected     = true,
+                    onClick      = { onClearFilter(cleared) },
+                    label        = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                    trailingIcon = {
+                        Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(14.dp))
+                    }
+                )
             }
-            filters.loader?.let {
-                AssistChip(onClick = {}, label = { Text(it, style = MaterialTheme.typography.labelSmall) })
-            }
         }
-        filters.category?.let {
-            AssistChip(onClick = {}, label = { Text(it, style = MaterialTheme.typography.labelSmall) })
-        }
-        if (filters.sortIndex != "relevance") {
-            AssistChip(onClick = {}, label = { Text(filters.sortIndex, style = MaterialTheme.typography.labelSmall) })
-        }
-        TextButton(onClick = onClearFilters) {
-            Text("Clear", style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+fun SearchHistoryOverlay(
+    entries: List<String>,
+    onSelect: (String) -> Unit,
+    onRemove: (String) -> Unit
+) {
+    LazyColumn(
+        modifier       = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        items(entries) { entry ->
+            ListItem(
+                headlineContent = { Text(entry, style = MaterialTheme.typography.bodyMedium) },
+                leadingContent  = {
+                    Icon(Icons.Default.History, null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                },
+                trailingContent = {
+                    IconButton(onClick = { onRemove(entry) }) {
+                        Icon(Icons.Default.Close, "Remove",
+                            modifier = Modifier.size(16.dp),
+                            tint     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
         }
     }
 }
